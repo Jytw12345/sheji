@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>设计部工作台 · 流程 & 绩效</title>
+  <meta name="theme-color" content="#7c3aed" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <!-- 第三方库（CDN）。离线时自动降级：图表→表格，Excel→CSV，云端→本地 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand"><span class="logo">🎨</span> 设计部工作台</div>
+    <div class="sync">
+      <div class="userbox" id="userBox"></div>
+      <span id="modeBadge" class="badge">本地模式</span>
+      <span id="syncStatus">已同步 —</span>
+      <button id="btnRefresh" class="btn-ghost">刷新</button>
+    </div>
+  </header>
+
+  <!-- 导航 -->
+  <nav class="tabs" id="tabs">
+    <button data-tab="dashboard" class="active" data-perm="menu_dashboard">仪表盘</button>
+    <button data-tab="orders" data-perm="menu_orders">订单</button>
+    <button data-tab="designers" data-perm="menu_workbench">工作台</button>
+    <button data-tab="customers" data-perm="menu_customers">客户</button>
+    <button data-tab="analytics" data-perm="menu_analytics">经营分析</button>
+    <button data-tab="settings" data-perm="menu_settings">设置</button>
+  </nav>
+
+  <main>
+    <!-- ============ 仪表盘 ============ -->
+    <section id="tab-dashboard" class="active">
+      <div class="page-head">
+        <div><h2>经营仪表盘</h2><div class="sub" id="dashWindow">考核窗口加载中…</div></div>
+        <button class="btn secondary" id="btnDashRefresh">刷新数据</button>
+      </div>
+      <div class="kpi-grid" id="kpiGrid"></div>
+      <div class="charts-grid" style="margin-top:16px">
+        <div class="card"><div id="chartPerf"></div></div>
+        <div class="card"><div id="chartRate"></div></div>
+        <div class="card"><div id="chartStatus"></div></div>
+        <div class="card"><div id="chartType"></div></div>
+      </div>
+      <div class="card">
+        <h3>本月绩效速览</h3>
+        <div class="table-scroll"><table class="tbl" id="dashPerfTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ 订单 ============ -->
+    <section id="tab-orders">
+      <div class="page-head">
+        <div><h2>订单管理</h2><div class="sub">接单 → 派单 → 提案（通过→设计中 / 不通过→二次提案）→ 设计中 → 初稿 → 客户反馈（通过→定稿 / 不通过→二稿/三稿修改或换人）</div></div>
+        <div class="row">
+          <button class="btn" id="btnNewOrder" data-perm="orders_create">+ 新建订单</button>
+          <button class="btn secondary" id="btnExportOrders" data-perm="orders_export">导出筛选CSV</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <div class="field"><label>状态</label><select id="fStatus"><option value="">全部</option></select></div>
+          <div class="field"><label>设计师</label><select id="fDesigner"><option value="">全部</option></select></div>
+          <div class="field"><label>客户</label><select id="fCustomer"><option value="">全部</option></select></div>
+          <div class="field" style="max-width:220px"><label>关键字（标题/单号/客户）</label><input id="fKeyword" placeholder="输入关键字…" /></div>
+          <div class="field" style="justify-content:flex-end"><label>&nbsp;</label><button class="btn danger" id="btnResetFilter">重置</button></div>
+        </div>
+        <div class="table-scroll"><table class="tbl" id="ordersTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ 工作台 ============ -->
+    <section id="tab-designers">
+      <div class="page-head">
+        <div><h2>我的工作台</h2><div class="sub">选择设计师，查看本人订单任务、进度与时间节点</div></div>
+        <div class="field" style="min-width:180px"><label>当前设计师</label><select id="wDesigner"></select></div>
+      </div>
+      <div class="card">
+        <div class="row" id="workbenchStats" style="margin-bottom:12px"></div>
+        <div class="row" id="workbenchKpis" style="margin-bottom:16px"></div>
+        <div id="workbenchCards" class="workbench-cards"></div>
+      </div>
+    </section>
+
+    <!-- ============ 客户 ============ -->
+    <section id="tab-customers">
+      <div class="page-head">
+        <div><h2>客户管理</h2><div class="sub">下单≥2次自动标记为复购客户</div></div>
+        <button class="btn" id="btnNewCustomer" data-perm="customers_create">+ 新建客户</button>
+      </div>
+      <div class="card">
+        <div class="table-scroll"><table class="tbl" id="customersTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ 经营分析 ============ -->
+    <section id="tab-analytics">
+      <div class="page-head">
+        <div><h2>经营分析</h2><div class="sub" id="anaWindow">统计范围加载中…</div></div>
+        <div class="row" style="align-items:flex-end">
+          <div class="field"><label>统计范围</label>
+            <select id="anaMode">
+              <option value="window">考核窗口（上月26~本月25）</option>
+              <option value="custom">自定义日期</option>
+            </select>
+          </div>
+          <div class="field" id="anaRangeBox" style="display:none">
+            <label>起 ~ 止</label>
+            <div class="row" style="gap:6px">
+              <input type="date" id="anaStart" />
+              <input type="date" id="anaEnd" />
+            </div>
+          </div>
+          <button class="btn secondary" id="btnAnaRefresh">查看</button>
+          <button class="btn" id="btnAnaCSV" data-perm="analytics_export">导出 CSV</button>
+        </div>
+      </div>
+
+      <!-- KPI：10 项指标 -->
+      <div class="kpi-grid" id="kpiAna"></div>
+
+      <!-- 图表 -->
+      <div class="charts-grid" style="margin-top:16px">
+        <div class="card"><div id="chartDispatch"></div></div>
+        <div class="card"><div id="chartConcurrency"></div></div>
+        <div class="card"><div id="chartPass"></div></div>
+        <div class="card"><div id="chartRework"></div></div>
+      </div>
+
+      <!-- 设计师每日未完工并发曲线 -->
+      <div class="card" style="margin-top:16px">
+        <div class="row" style="align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <h3 style="margin:0">设计师每日未完工并发曲线
+            <span class="sub" style="color:var(--muted);font-weight:400">按所选月份，统计每位设计师每天同时在做的未完工任务数（已定稿/已换人的单不再计入）</span>
+          </h3>
+          <div class="row" style="gap:8px;align-items:flex-end">
+            <div class="field"><label>月份</label><input type="month" id="anaMonth" /></div>
+            <button class="btn secondary" id="btnAnaMonth">生成并发曲线</button>
+          </div>
+        </div>
+        <div id="chartConcurrencyDaily" style="margin-top:12px"></div>
+      </div>
+
+      <!-- 设计师明细 -->
+      <div class="card">
+        <h3>设计师明细（协同单每位参与者各计 1 单，营收归主负责人）</h3>
+        <div class="table-scroll"><table class="tbl" id="anaTable"></table></div>
+        <div id="anaCoef" class="sub" style="margin-top:10px;color:var(--muted)"></div>
+      </div>
+
+      <!-- 并发甘特图 -->
+      <div class="card">
+        <h3>设计师并发甘特图 <span class="sub" style="color:var(--muted)">同一行内重叠的长条 = 同一时段同步推进的单子</span></h3>
+        <div id="anaGantt"></div>
+      </div>
+
+      <!-- 项目改稿明细 -->
+      <div class="card">
+        <h3>项目改稿 / 返工 / 投诉明细</h3>
+        <div class="table-scroll"><table class="tbl" id="anaProjects"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section id="tab-settings">
+      <div class="page-head"><div><h2>系统设置</h2><div class="sub">配置云端数据库与考核参数</div></div></div>
+      <div class="grid2">
+        <div class="card" data-perm="manage_settings">
+          <h3>云端数据库（Supabase）</h3>
+          <p class="sub" style="color:var(--muted)">在 <a href="https://supabase.com" target="_blank">supabase.com</a> 建库后，执行 <code>sql/schema.sql</code>，再把下方 URL 与 anon key 填好即可开启多端实时同步。留空则使用本地存储。</p>
+          <div id="cloudFixedHint" class="kv" style="display:none;margin-bottom:12px;padding:10px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;color:#0e7490">
+            ☁ 已通过部署配置（config.js）<b>固定</b>为统一云端库，此处不可修改。如需更换项目，请由部署管理员编辑 config.js 中的 <code>SUPABASE_URL</code> / <code>SUPABASE_ANON_KEY</code>。
+          </div>
+          <div class="field"><label>Supabase URL</label><input id="sUrl" placeholder="https://xxxx.supabase.co" /></div>
+          <div class="field"><label>Anon Key（公开密钥）</label><input id="sKey" placeholder="eyJ…" /></div>
+          <button class="btn" id="btnSaveSupabase" style="margin-top:10px">保存并连接</button>
+          <button class="btn secondary" id="btnTestSupabase" style="margin-top:10px">测试连接</button>
+          <button class="btn secondary" id="btnReconnectSupabase" style="margin-top:10px">刷新云端缓存</button>
+          <div class="conn-status" id="connStatus" style="margin-top:14px"></div>
+        </div>
+        <div class="card" data-perm="manage_settings">
+          <h3>考核参数</h3>
+          <div class="grid2">
+            <div class="field"><label>小单上限(元，含)</label><input id="sSmallMax" type="number" /></div>
+            <div class="field"><label>大单下限(元，不含)</label><input id="sLargeMin" type="number" /></div>
+            <div class="field"><label>基础绩效工资(元)</label><input id="sBase" type="number" /></div>
+            <div class="field"><label>团队奖门槛1(元)</label><input id="sTa1" type="number" /></div>
+            <div class="field"><label>团队奖金额1(元)</label><input id="sAa1" type="number" /></div>
+            <div class="field"><label>团队奖门槛2(元)</label><input id="sTa2" type="number" /></div>
+            <div class="field"><label>团队奖金额2(元)</label><input id="sAa2" type="number" /></div>
+            <div class="field"><label>小单达标线(单/人)</label><input id="sTarget" type="number" /></div>
+          </div>
+          <button class="btn" id="btnSaveParams" style="margin-top:10px">保存参数</button>
+        </div>
+      </div>
+      <div class="card" data-perm="manage_designers">
+        <h3>人员与分组管理</h3>
+        <div class="sub" style="color:var(--muted);margin-bottom:12px">新增/删除人员与分组；人员在岗状态请在列表中管理。</div>
+        <div>
+          <h4 style="margin:0 0 10px">人员列表</h4>
+          <div class="table-scroll"><table class="tbl" id="settingsDesignersTable"></table></div>
+          <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+          <h4 style="margin:0 0 10px">+ 新增人员</h4>
+          <div class="row">
+            <div class="field" style="flex:2"><label>姓名</label><input id="dName" placeholder="如：张三" /></div>
+            <div class="field"><label>职务</label><select id="dRole"></select></div>
+            <div class="field"><label>分组</label><select id="dGroup"><option value="">未分组</option></select></div>
+            <div class="field" style="flex:1.2"><label>登录密码</label><input id="dPw" type="password" placeholder="留空则不设密码" autocomplete="new-password" /></div>
+            <div class="field" style="flex:0 0 auto;align-self:flex-end"><label>参与设计</label><label class="cb-inline"><input type="checkbox" id="dDesign" checked /> 可派单</label></div>
+            <div class="field" style="flex:0 0 auto;align-self:flex-end"><label>参与统计</label><label class="cb-inline"><input type="checkbox" id="dPerf" checked /> 计入绩效</label></div>
+            <div class="field" style="flex:0 0 auto;align-self:flex-end"><label>参与平均</label><label class="cb-inline"><input type="checkbox" id="dAvg" checked /> 进团队均值</label></div>
+          </div>
+          <button class="btn" id="btnAddDesigner" style="margin-top:10px">添加</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--line);margin:24px 0">
+        <div>
+          <h4 style="margin:0 0 10px">分组管理</h4>
+          <div class="table-scroll"><table class="tbl" id="settingsGroupsTable"></table></div>
+          <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+          <div class="row">
+            <div class="field" style="flex:2"><label>新分组名称</label><input id="gName" placeholder="如：平面组" /></div>
+            <button class="btn" id="btnAddGroup" style="align-self:flex-end;margin-bottom:0">添加</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" data-perm="manage_data">
+        <h3>数据管理</h3>
+        <p class="sub" style="color:var(--muted)">导出全部业务数据为 JSON 备份。正式使用期间不再提供「载入示例数据、清空数据、本地推送云端」等演示/高危操作。</p>
+        <button class="btn secondary" id="btnExportAll">导出全部(JSON)</button>
+      </div>
+      <div class="card" data-perm="manage_permissions">
+        <h3>权限配置 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员）</span></h3>
+        <p class="sub" style="color:var(--muted);margin-bottom:10px">为「管理员 / 店长 / 设计师」三个职务设置各菜单与按钮的默认显隐，并可对单个设计师做个性化覆盖。修改即时生效。</p>
+        <div id="permConfigBox"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 通用模态框 -->
+  <div class="modal-mask" id="modalMask">
+    <div class="modal" id="modalBox"></div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app） -->
+  <script src="js/config.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/calc.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').then((reg) => {
+          window.__swReg = reg;
+          const notify = () => { if (window.showAppUpdate) window.showAppUpdate(); };
+          // 检测到新版本（安装完成且页面已被旧 SW 控制 → 说明是更新而非首装）
+          reg.addEventListener('updatefound', () => {
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', () => {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) notify();
+            });
+          });
+          // 若加载时已有等待中的新 SW（上次没点更新）
+          if (reg.waiting && navigator.serviceWorker.controller) setTimeout(notify, 1500);
+          // 用户点「立即更新」后置位，待新 SW 接管页面时再真正刷新
+          let pendingUpdate = false;
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (pendingUpdate) { pendingUpdate = false; window.location.reload(); }
+          });
+          window.__swPendingUpdate = () => { pendingUpdate = true; };
+        }).catch((e) => console.warn('Service Worker 注册失败：', e));
+      });
+    }
+  </script>
+</body>
+</html>
