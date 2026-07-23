@@ -127,7 +127,7 @@ window.DB = (function () {
       ['orders', ['collab_designer_ids', 'rework_category', 'revision_note', 'complaint_count', 'proposal_count', 'complaint_log']],
       ['designers', ['auth_id', 'email', 'active']],
       ['settings', ['permissions']],
-      ['customers', ['company', 'address', 'notes']]
+      ['customers', ['company', 'address', 'notes', 'tag']]
     ];
     const missing = [];
     for (const [tbl, cols] of checks) {
@@ -246,9 +246,20 @@ window.DB = (function () {
   async function saveCustomer(c) {
     const isEdit = !!c.id;
     c = Object.assign({ id: uid(), created_at: nowISO() }, c);
-    const saved = await save('customers', c);
-    if (isEdit) await cascadeCustomerName(c.id, c.name);
-    return saved;
+    try {
+      const saved = await save('customers', c);
+      if (isEdit) await cascadeCustomerName(c.id, c.name);
+      return saved;
+    } catch (e) {
+      // 兼容旧库尚未执行 schema.sql（缺 tag 列）：去掉 tag 重试，保证客户保存不被阻断
+      if (e && String(e.message || '').includes('tag') && c.tag !== undefined) {
+        delete c.tag;
+        const saved = await save('customers', c);
+        if (isEdit) await cascadeCustomerName(c.id, c.name);
+        return saved;
+      }
+      throw e;
+    }
   }
   async function cascadeCustomerName(customerId, name) {
     if (!customerId) return;

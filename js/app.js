@@ -690,7 +690,49 @@
     if (c.company) parts.push('<span class="cust-pill">👤 ' + esc(c.company) + '</span>');
     parts.push('<span class="cust-pill">☎ ' + esc(c.phone || '—') + '</span>');
     parts.push('<span class="cust-pill">📍 ' + esc(c.address || '—') + '</span>');
+    if (c.tag) parts.push('<span class="cust-pill tag">🏷 ' + esc(c.tag) + '</span>');
     return parts.join('');
+  }
+
+  // 截稿时间选择器：日期 + 每 10 分钟的时间下拉 + 快捷预设；隐藏 #oDeadline 承载组合值
+  function deadlinePickerHtml(o) {
+    const v = o.deadline ? toLocalInput(o.deadline) : '';
+    const [date, time] = v ? v.split('T') : ['', ''];
+    const timeMM = time ? time.slice(0, 5) : '';
+    let opts = '<option value="">选择时间</option>';
+    for (let h = 0; h < 24; h++) {
+      for (let m = 0; m < 60; m += 10) {
+        const hh = String(h).padStart(2, '0'), mm = String(m).padStart(2, '0');
+        const val = hh + ':' + mm;
+        opts += '<option value="' + val + '"' + (val === timeMM ? ' selected' : '') + '>' + val + '</option>';
+      }
+    }
+    const presets = [['今天 18:00', 'today1800'], ['明天 18:00', 'tom1800'], ['3 天后', 'plus3']];
+    const hidden = (date && timeMM) ? (date + 'T' + timeMM) : '';
+    return ''
+      + '<div class="grid2-sm" style="margin-top:6px">'
+      +   '<div><label>截稿日期</label><input id="oDeadlineDate" type="date" value="' + date + '"></div>'
+      +   '<div><label>截稿时间（每 10 分钟）</label><select id="oDeadlineTime">' + opts + '</select></div>'
+      + '</div>'
+      + '<div style="margin-top:8px"><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">快捷设置</label>'
+      +   '<div class="chips">' + presets.map(p => '<button type="button" class="chip" data-dl-preset="' + p[1] + '">' + p[0] + '</button>').join('') + '</div></div>'
+      + '<input id="oDeadline" type="hidden" value="' + hidden + '">';
+  }
+  function syncDeadline() {
+    const d = $('#oDeadlineDate'), t = $('#oDeadlineTime'), h = $('#oDeadline');
+    if (!d || !t || !h) return;
+    if (d.value && !t.value) t.value = '18:00'; // 选了日期但没选时间，默认 18:00
+    h.value = (d.value && t.value) ? (d.value + 'T' + t.value) : '';
+  }
+  function applyDeadlinePreset(kind) {
+    const d = new Date();
+    if (kind === 'tom1800') d.setDate(d.getDate() + 1);
+    if (kind === 'plus3') d.setDate(d.getDate() + 3);
+    const ds = $('#oDeadlineDate'), ts = $('#oDeadlineTime');
+    if (!ds || !ts) return;
+    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    ds.value = y + '-' + m + '-' + day; ts.value = '18:00';
+    syncDeadline();
   }
 
   function renderOrderModal() {
@@ -737,9 +779,10 @@
       <div class="compact-form">
         <div class="form-section">
           <div class="form-sec-title">基础信息</div>
-          <div class="grid2-sm">
-            <div class="field"><label>标题</label><input id="oTitle" value="${esc(o.title)}" placeholder="如：XX公司名片设计"></div>
+          <div class="field"><label>标题</label><input id="oTitle" value="${esc(o.title)}" placeholder="如：XX公司名片设计"></div>
+          <div class="grid2-sm" style="margin-top:8px">
             <div class="field"><label>客户</label><select id="oCustomer"><option value="">请选择客户</option><option value="__new__">+ 新建客户</option>${cs.map(c => '<option value="' + c.id + '"' + (c.id === o.customer_id ? ' selected' : '') + '>' + esc(c.name) + '</option>').join('')}</select></div>
+            <div class="field"><label>任务类型</label><select id="oType">${window.Cfg.TASK_TYPES.map(t => '<option' + (t === o.task_type ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
           </div>
           <div class="field" id="oCustInfo" style="margin-top:8px"><label>客户信息</label><div class="cust-meta">${customerInfoHtml(cs, o.customer_id)}</div></div>
           <div id="oNewCustomer" class="card light" style="display:none;margin:8px 0 0;padding:10px">
@@ -750,8 +793,7 @@
               <div class="field"><label>地址</label><input id="oNewCAddress"></div>
             </div>
           </div>
-          <div class="grid3-sm" style="margin-top:8px">
-            <div class="field"><label>任务类型</label><select id="oType">${window.Cfg.TASK_TYPES.map(t => '<option' + (t === o.task_type ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
+          <div class="grid2-sm" style="margin-top:8px">
             <div class="field"><label>金额/营收(元)</label><input id="oAmount" type="number" value="${o.amount || 0}"></div>
             <div class="field"><label>状态 <span class="muted" style="font-weight:400;font-size:11px">（只读 · 仅流程推进变更）</span></label><div class="ro-box">${pill(o.status)}</div></div>
           </div>
@@ -761,14 +803,14 @@
           <div class="form-sec-title">派单与协作</div>
           <div class="grid2-sm">
             <div class="field"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
-            <div class="field"><label>截稿时间（10 分钟间隔）</label><input id="oDeadline" type="datetime-local" step="600" value="${toLocalInput(o.deadline)}"></div>
+            <div class="field"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
           </div>
-          <div class="field" style="margin-top:8px"><label>协作设计师（2~3 人协同，每位参与者各计 1 单）</label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
+          <div class="field" style="margin-top:8px"><label>截稿时间（每 10 分钟）</label>${deadlinePickerHtml(o)}</div>
         </div>
 
         <div class="form-section">
           <div class="form-sec-title">修改与投诉 <span class="muted" style="font-weight:400;font-size:12px">（自动累计，不可手动改小）</span></div>
-          <div class="grid3-sm">
+          <div class="grid2-sm">
             <div class="field"><label>修改次数</label><div class="ro-box"><span id="revVal" class="ro-val">${o.revision_count || 0}</span><span class="muted" style="font-size:11px"> 流程自动累计</span></div></div>
             <div class="field"><label>客户投诉笔数</label><div class="ro-box"><span id="complaintVal" class="ro-val">${o.complaint_count || 0}</span><button type="button" class="btn-mini" data-complaint="inc" title="记录一次客户投诉（+1）">＋投诉</button></div></div>
           </div>
@@ -821,6 +863,51 @@
       ${renderTimeline(o)}
       <div class="flow-actions">${flow}</div>`;
 
+    // 新建订单专用精简表单：只保留下单必要字段，去掉「修改与投诉 / 流程时间戳」等对新单无意义的区块，
+    // 文件路径与备注折叠进「更多信息」，尽量压缩高度、保持美观。所有 id 与保存逻辑对齐。
+    const newInfoForm = `
+      <div class="compact-form order-new">
+        <div class="form-section">
+          <div class="form-sec-title">基础信息</div>
+          <div class="field"><label>订单标题</label><input id="oTitle" value="${esc(o.title)}" placeholder="如：XX公司名片设计"></div>
+          <div class="grid3-sm" style="margin-top:8px">
+            <div class="field"><label>客户</label><select id="oCustomer"><option value="">请选择客户</option><option value="__new__">+ 新建客户</option>${cs.map(c => '<option value="' + c.id + '"' + (c.id === o.customer_id ? ' selected' : '') + '>' + esc(c.name) + '</option>').join('')}</select></div>
+            <div class="field"><label>任务类型</label><select id="oType">${window.Cfg.TASK_TYPES.map(t => '<option' + (t === o.task_type ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
+            <div class="field"><label>金额/营收(元)</label><input id="oAmount" type="number" value="${o.amount || 0}"></div>
+          </div>
+          <div class="field" id="oCustInfo" style="margin-top:8px"><div class="cust-meta">${customerInfoHtml(cs, o.customer_id)}</div></div>
+          <div id="oNewCustomer" class="card light" style="display:none;margin:8px 0 0;padding:10px">
+            <div class="grid2-sm">
+              <div class="field"><label>客户名称</label><input id="oNewCName" placeholder="如：XX公司"></div>
+              <div class="field"><label>联系人</label><input id="oNewCCompany" placeholder="联系人姓名"></div>
+              <div class="field"><label>电话</label><input id="oNewCPhone"></div>
+              <div class="field"><label>地址</label><input id="oNewCAddress"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="form-sec-title">派单与协作 <span class="muted" style="font-weight:400;font-size:11px">（可稍后在流程中派单）</span></div>
+          <div class="grid2-sm">
+            <div class="field"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
+            <div class="field"><label>截稿时间（每 10 分钟）</label>${deadlinePickerHtml(o)}</div>
+          </div>
+          <div class="field" style="margin-top:8px"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（2~3 人协同，各计 1 单）</span></label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
+        </div>
+
+        <details class="info-collapse"><summary>文件路径 / 备注（可选）</summary>
+          <div class="field" style="margin-top:8px"><label>素材文件路径（每行一个，可直接粘贴电脑路径）</label>
+            <textarea id="oFilePaths" rows="2" placeholder="如：//DESKTOP-PC/share/素材/海报.psd&#10;D:/项目/客户A/原始文件">${esc((o.file_paths || []).join('\n'))}</textarea>
+            <div id="filePathList" style="margin-top:6px">${filePathItemsHtml(o.file_paths || [], 'data-openfolder')}</div>
+          </div>
+          <div class="field" style="margin-top:8px"><label>设计稿路径（每行一个）</label>
+            <textarea id="oDesignPaths" rows="2" placeholder="如：D:/项目/客户A/设计稿&#10;//NAS/design/客户A">${esc((o.design_paths || []).join('\n'))}</textarea>
+            <div id="designPathList" style="margin-top:6px">${filePathItemsHtml(o.design_paths || [], 'data-openfolder')}</div>
+          </div>
+          <div class="field" style="margin-top:8px"><label>备注</label><textarea id="oNotes" rows="2" placeholder="订单补充说明…">${esc(o.notes)}</textarea></div>
+        </details>
+      </div>`;
+
     const isDetail = !!o.id;
     let html;
     if (isDetail) {
@@ -839,12 +926,11 @@
     } else {
       html = `
       <button class="close" data-close>×</button>
-      <h3>新建订单 · <span style="font-size:14px;color:var(--muted)">${esc(o.order_no)}</span></h3>
-      ${infoForm}
-      <div class="flow-actions" style="margin-top:12px">${flow}</div>
-      <div class="row" style="justify-content:flex-end">
+      <h3>新建订单 <span class="order-no-tag">${esc(o.order_no)}</span></h3>
+      ${newInfoForm}
+      <div class="modal-foot">
         <button class="btn secondary" id="oCancel" data-close>取消</button>
-        <button class="btn" id="oSave">保存</button>
+        <button class="btn" id="oSave">保存订单</button>
       </div>`;
     }
     openModal(html);
@@ -877,6 +963,12 @@
         $('#designPathList').innerHTML = filePathItemsHtml(paths, 'data-openfolder');
       };
       dpEl.addEventListener('input', upd);
+    }
+    // 截稿时间选择器：日期/时间联动 + 快捷预设
+    if ($('#oDeadlineDate')) {
+      $('#oDeadlineDate').addEventListener('change', syncDeadline);
+      $('#oDeadlineTime').addEventListener('change', syncDeadline);
+      $$('#modalBox [data-dl-preset]').forEach(b => b.addEventListener('click', () => applyDeadlinePreset(b.dataset.dlPreset)));
     }
     $('#modalBox').addEventListener('click', (e) => {
       const of = e.target.closest('[data-openfolder]');
@@ -1737,7 +1829,7 @@
   async function renderCustomers() {
     const [cs, orders] = [state._customers || [], state._orders || []];
     $('#customersTable').innerHTML =
-      '<thead><tr><th>客户</th><th>联系人</th><th>电话</th><th>累计金额</th><th>订单数</th><th>类型</th><th>操作</th></tr></thead><tbody>' +
+      '<thead><tr><th>客户</th><th>联系人</th><th>电话</th><th>标注</th><th>累计金额</th><th>订单数</th><th>类型</th><th>操作</th></tr></thead><tbody>' +
       (cs.length ? cs.map(c => {
         const co = orders.filter(o => o.customer_id === c.id);
         const amt = co.reduce((s, o) => s + (Number(o.amount) || 0), 0);
@@ -1745,11 +1837,12 @@
         return '<tr style="cursor:pointer" data-cid="' + c.id + '">' +
           '<td>' + esc(c.name) + (repeat ? ' <span class="repeat-tag">复购</span>' : '') + '</td>' +
           '<td>' + esc(c.company || '—') + '</td><td>' + esc(c.phone || '—') + '</td>' +
+          '<td>' + (c.tag ? '<span class="cust-pill tag">🏷 ' + esc(c.tag) + '</span>' : '—') + '</td>' +
           '<td class="num">¥' + money(amt) + '</td><td class="num">' + co.length + '</td>' +
           '<td>' + (repeat ? '复购' : '新客') + '</td>' +
           '<td><button class="btn sm" data-view="' + c.id + '">详情</button> ' +
           '<button class="btn sm danger" data-cdel="' + c.id + '" data-perm="customers_edit">删除</button></td></tr>';
-      }).join('') : '<tr><td colspan="7" class="empty">暂无客户，点击“新建客户”</td></tr>') + '</tbody>';
+      }).join('') : '<tr><td colspan="8" class="empty">暂无客户，点击“新建客户”</td></tr>') + '</tbody>';
     $$('#customersTable [data-view]').forEach(b => b.addEventListener('click', () => viewCustomer(b.dataset.view)));
     $$('#customersTable [data-cdel]').forEach(b => b.addEventListener('click', async (e) => {
       e.stopPropagation(); if (!can('customers_edit')) { toast('无权限'); return; }
@@ -1768,6 +1861,7 @@
         <div class="field"><label>联系人</label><input id="cCompany" value="${esc(c.company || '')}" placeholder="联系人姓名"></div>
         <div class="field"><label>电话</label><input id="cPhone" value="${esc(c.phone || '')}"></div>
         <div class="field"><label>地址</label><input id="cAddress" value="${esc(c.address || '')}"></div>
+        <div class="field"><label>文字标注</label><input id="cTag" value="${esc(c.tag || '')}" placeholder="如：重点客户 / 价格敏感 / 急单优先"></div>
       </div>
       <div class="field" style="margin-top:10px"><label>备注</label><textarea id="cNotes" rows="2">${esc(c.notes || '')}</textarea></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px">
@@ -1793,7 +1887,7 @@
     const html = `<button class="close" data-close>×</button><h3>${esc(c.name)} ${repeat ? '<span class="repeat-tag">复购客户</span>' : ''}</h3>
       <div class="grid2">
         <div><b>联系人：</b>${esc(c.company || '—')}</div><div><b>电话：</b>${esc(c.phone || '—')}</div>
-        <div><b>地址：</b>${esc(c.address || '—')}</div><div><b>累计金额：</b>¥${money(amt)}</div>
+        <div><b>地址：</b>${esc(c.address || '—')}</div><div><b>文字标注：</b>${esc(c.tag || '—')}</div>
       </div>
       <p style="color:var(--muted)">${esc(c.notes || '')}</p>
       <h3>历史订单（${orders.length}）</h3>

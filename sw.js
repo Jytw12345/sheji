@@ -5,7 +5,7 @@
  *  - 跨域 CDN（Supabase / Chart.js / xlsx）：stale-while-revalidate
  * 注意：所有预缓存路径使用相对路径，自动适配 GitHub Pages 子路径部署。
  */
-const CACHE = 'dw-pwa-v20';
+const CACHE = 'dw-pwa-v21';
 const PRECACHE = [
   './',
   './index.html',

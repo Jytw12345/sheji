@@ -304,6 +304,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .collab-tag { display:inline-block; margin-left:4px; font-size:11px; color:var(--primary); background:#eef2ff; padding:1px 6px; border-radius:999px; }
 .cust-meta { display:flex; flex-wrap:wrap; gap:8px; font-size:13px; }
 .cust-pill { display:inline-flex; align-items:center; gap:4px; background:#fff; border:1px solid var(--line); padding:4px 10px; border-radius:999px; color:var(--text); }
+.cust-pill.tag { background:#fff7ed; border-color:#fed7aa; color:#c2410c; font-weight:600; }
 
 /* 流程时间轴 */
 .timeline { margin:6px 0 10px; padding:12px; background:#f8fafc; border:1px solid var(--line); border-radius:10px; }
@@ -348,6 +349,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .compact-form .chips { gap: 6px; }
 .compact-form .chk { padding: 3px 8px; font-size: 12px; }
 .compact-form details summary { font-size: 12px; }
+
+/* 新建订单弹窗：更紧凑、更美观 */
+.order-new .form-section { background: #fff; border-color: #eef1f5; padding: 12px 14px; }
+/* 详情「订单信息」折叠区：去掉内部嵌套边框卡片，改为轻量分区，避免多层边框叠加显乱 */
+.info-collapse .compact-form .form-section { border: none; background: transparent; padding: 0; margin-bottom: 14px; }
+.info-collapse .compact-form .form-section:last-child { margin-bottom: 0; }
+.info-collapse .compact-form .form-sec-title { color: var(--text); }
+.info-collapse .compact-form .form-sec-title::before { background: var(--line); }
+.order-new .form-sec-title { margin-bottom: 10px; }
+.order-new .info-collapse { margin: 10px 0 0; }
+.order-no-tag { display: inline-block; margin-left: 8px; padding: 2px 10px; font-size: 12px; font-weight: 600; color: var(--primary); background: rgba(37,99,235,.08); border-radius: 999px; vertical-align: middle; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 /* 工作台卡片 */
 .workbench-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
