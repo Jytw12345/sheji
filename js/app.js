@@ -258,6 +258,15 @@
       if (first) switchTabQuiet(first.dataset.tab);
     }
   }
+  // 取某个 tab 对应的权限 key（优先用按钮上的 data-perm，避免 tab id 与权限 key 不一致）
+  function tabPermKey(tab) {
+    const btn = $('#tabs button[data-tab="' + tab + '"]');
+    return (btn && btn.dataset.perm) || ('menu_' + tab);
+  }
+  function tabLabel(tab) {
+    const btn = $('#tabs button[data-tab="' + tab + '"]');
+    return (btn && btn.textContent) || tab;
+  }
   // 仅切换标签高亮 + 显示对应 section，不做登录判断（供 applyPermissions 内部调用）
   function switchTabQuiet(tab) {
     state.tab = tab;
@@ -318,7 +327,7 @@
       state._subscribed = true;
     }
     // 若记住的页无权限，落到仪表盘（仪表盘默认全开）
-    if (!state.tab || !can('menu_' + state.tab)) state.tab = 'dashboard';
+    if (!state.tab || !can(tabPermKey(state.tab))) state.tab = 'dashboard';
     await renderTabContent(state.tab);
     if (state._settings && state._settings._schemaError) {
       toast('云端表缺字段，部分保存会失败：请打开「设置」查看并执行迁移 SQL');
@@ -460,7 +469,7 @@
     $$('#tabs button').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   }
   async function switchTab(tab) {
-    if (!can('menu_' + tab)) { toast('当前账号无「' + tab + '」菜单权限'); return; }
+    if (!can(tabPermKey(tab))) { toast('当前账号无「' + tabLabel(tab) + '」菜单权限'); return; }
     switchTabQuiet(tab);
     await renderTabContent(tab);
     applyPermissions();
