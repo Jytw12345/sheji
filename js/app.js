@@ -726,7 +726,6 @@
     else if (o.status === '客户反馈') {
       flow = '<div class="revise-box">' +
         '<button class="btn ok" data-flow="finalize">通过（定稿）</button>' +
-        '<button class="btn ok" data-flow="finalize">通过（定稿）</button>' +
         '<button class="btn warn" data-flow="revise">需要修改</button></div>';
     } else if (o.status === '修改中') flow = '<button class="btn ok" data-flow="finalize">客户定稿</button>' +
       '<button class="btn danger" data-flow="switch">换人</button>';
@@ -768,13 +767,16 @@
         </div>
 
         <div class="form-section">
-          <div class="form-sec-title">返工与投诉 <span class="muted" style="font-weight:400;font-size:12px">（自动累计，不可手动改小）</span></div>
+          <div class="form-sec-title">修改与投诉 <span class="muted" style="font-weight:400;font-size:12px">（自动累计，不可手动改小）</span></div>
           <div class="grid3-sm">
             <div class="field"><label>修改次数</label><div class="ro-box"><span id="revVal" class="ro-val">${o.revision_count || 0}</span><span class="muted" style="font-size:11px"> 流程自动累计</span></div></div>
             <div class="field"><label>客户投诉笔数</label><div class="ro-box"><span id="complaintVal" class="ro-val">${o.complaint_count || 0}</span><button type="button" class="btn-mini" data-complaint="inc" title="记录一次客户投诉（+1）">＋投诉</button></div></div>
-            <div class="field"><label>修改/返工原因</label><span class="badge ${o.rework_category === '设计原因' ? 'bad' : (o.rework_category ? 'warn' : 'muted')}">${o.rework_category || '—'}</span>${o.revision_note ? '<div class="cmp-note">' + esc(o.revision_note) + '</div>' : ''}</div>
           </div>
-          ${(o.complaint_log && o.complaint_log.length) ? '<div class="complaint-list" style="margin-top:10px"><div class="form-sec-title" style="font-size:12px">投诉记录</div>' + o.complaint_log.map((c, i) => '<div class="complaint-item"><span class="muted">#' + (i + 1) + '</span> <span class="badge ' + (c.reason === '设计原因' ? 'bad' : 'warn') + '">' + esc(c.reason || '—') + '</span> <span class="muted">' + (c.ts ? fmtTime(c.ts) : '') + '</span>' + (c.note ? '<div class="cmp-note">' + esc(c.note) + '</div>' : '') + '</div>').join('') + '</div>' : ''}
+          <div class="field" style="margin-top:10px"><label>投诉原因</label>
+            ${(o.complaint_log && o.complaint_log.length)
+              ? '<div class="complaint-list">' + o.complaint_log.map((c, i) => '<div class="complaint-item"><span class="muted">#' + (i + 1) + '</span> <span class="badge ' + (c.reason === '设计原因' ? 'bad' : 'warn') + '">' + esc(c.reason || '—') + '</span> <span class="muted">' + (c.ts ? fmtTime(c.ts) : '') + '</span>' + (c.note ? '<div class="cmp-note">' + esc(c.note) + '</div>' : '') + '</div>').join('') + '</div>'
+              : '<span class="muted" style="font-size:12px">暂无投诉，点击上方「＋投诉」记录</span>'}
+          </div>
         </div>
 
         <div class="form-section">
@@ -1046,7 +1048,7 @@
       // 只有从「客户反馈」点不通过，才是真正的修改开始
       if (prev === '客户反馈') {
         o.revision_count = (o.revision_count || 0) + 1;
-        o.rework_category = opts.reworkCategory || '客户原因';
+        // 修改不再记录返工原因（原因概念仅保留在「投诉」中）
         o.revision_at = now; o.feedback_failed_at = now;
         pushLog('revision_log', now); pushLog('feedback_failed_log', now);
         // 不再自动换人：三次修改后仍停留在「修改中」（三稿修改中），
