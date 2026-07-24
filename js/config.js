@@ -62,7 +62,7 @@ window.Cfg = (function () {
     { key: 'customers_edit', label: '编辑 / 删除客户', group: 'customer', def: { 管理员: true, 店长: true, 设计师: false } },
 
     // —— 数据范围 ——
-    { key: 'analytics_export', label: '导出经营分析（含绩效工资）', group: 'data', def: { 管理员: true, 店长: true, 设计师: false } },
+    { key: 'analytics_export', label: '导出经营分析（含业绩指标）', group: 'data', def: { 管理员: true, 店长: true, 设计师: false } },
     { key: 'orders_view_all', label: '查看全部订单（否则仅本人参与）', group: 'data', def: { 管理员: true, 店长: true, 设计师: false } },
     { key: 'analytics_view_all', label: '经营分析看全部（否则仅本人）', group: 'data', def: { 管理员: true, 店长: true, 设计师: false } },
 

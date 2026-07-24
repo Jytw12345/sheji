@@ -44,22 +44,17 @@ window.Exporter = (function () {
     const winStart = fmtTime(win.start).slice(0, 10);
     const winEnd = fmtTime(win.end).slice(0, 10);
 
-    // —— Sheet1 绩效汇总 ——
+    // —— Sheet1 业绩汇总 ——
     const head1 = ['设计师', '角色', '接单数', '定稿数', '定稿率', '完成率', '绩效系数',
-      '小单有效数', '小单提成(元)', '小单扣减(元)', '基础绩效(元)', '总绩效(元)'];
+      '小单有效数'];
     const rows1 = report.rows.map(r => [
       r.designerName, r.role, r.total, r.finalizedCount, pct(r.rate), pct(r.completion),
-      r.coef, r.smallCount, money(r.smallBonus), money(r.smallDeduction),
-      money(r.basePerf), money(r.totalPerf)
+      r.coef, r.smallCount
     ]);
     rows1.push([]);
     rows1.push(['团队汇总', '', '', '', '', '', '',
-      '团队营收(元): ' + money(report.team.revenue),
-      '团队奖(元): ' + money(report.team.award),
-      '人均小单: ' + report.team.avgSmall,
-      '绩效合计(元): ' + money(report.team.totalPerfSum),
-      '小单提成合计: ' + money(report.team.totalSmallBonus)]);
-    const aoa1 = [['设计部绩效月报表 — ' + monthLabel + '（考核窗口：' + winStart + ' ~ ' + winEnd + '）'], head1].concat(rows1);
+      '团队营收(元): ' + money(report.team.revenue) + ' · 人均小单: ' + report.team.avgSmall]);
+    const aoa1 = [['设计部业绩月报表 — ' + monthLabel + '（考核窗口：' + winStart + ' ~ ' + winEnd + '）'], head1].concat(rows1);
 
     // —— Sheet2 订单明细（窗口内）——
     const head2 = ['订单号', '标题', '客户', '任务类型', '金额(元)', '分类',
@@ -79,13 +74,13 @@ window.Exporter = (function () {
 
     if (typeof window.XLSX !== 'undefined') {
       const wb = window.XLSX.utils.book_new();
-      window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(aoa1), '绩效汇总');
+      window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(aoa1), '业绩汇总');
       window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(aoa2), '订单明细');
-      window.XLSX.writeFile(wb, '设计部绩效_' + monthLabel + '.xlsx');
+      window.XLSX.writeFile(wb, '设计部业绩_' + monthLabel + '.xlsx');
       return 'excel';
     }
     // 降级：导出两个 CSV（压缩为 zip 不可行，改为分别下载）
-    downloadCSV(aoa1, '设计部绩效汇总_' + monthLabel + '.csv');
+    downloadCSV(aoa1, '设计部业绩汇总_' + monthLabel + '.csv');
     setTimeout(() => downloadCSV(aoa2, '设计部订单明细_' + monthLabel + '.csv'), 300);
     return 'csv';
   }

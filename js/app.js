@@ -287,10 +287,45 @@
     const box = $('#userBox');
     if (!box) return;
     if (!u) { box.innerHTML = ''; return; }
-    box.innerHTML = '<span class="ub-name">' + esc(u.name) + '</span>' +
-      '<span class="ub-role role-' + esc(u.role) + '">' + esc(u.role) + '</span>' +
-      '<button class="ub-logout" id="btnLogout" title="退出登录">退出</button>';
-    const lb = $('#btnLogout'); if (lb) lb.addEventListener('click', logout);
+    box.innerHTML = '<button type="button" class="ub-name" id="btnIdentity" title="点击查看身份">'
+        + esc(u.name) + '</button>'
+      + '<span class="ub-role role-' + esc(u.role) + ' desktop-only">' + esc(u.role) + '</span>';
+    const ib = $('#btnIdentity'); if (ib) ib.addEventListener('click', openIdentity);
+  }
+
+  // 点击顶栏人名 → 弹出身份详情（含退出登录）
+  function openIdentity() {
+    const u = state.currentUser;
+    if (!u) return;
+    const gMap = Object.fromEntries((state._groups || []).map(g => [g.id, g.name]));
+    const role = u.role || '—';
+    const group = (u.group_id && gMap[u.group_id]) || '—';
+    const email = u.email || '—';
+    const status = u.active === false ? '已停用' : '启用中';
+    const joined = u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '—';
+    const initial = (u.name || '?').slice(0, 1);
+    const html =
+      '<h3>我的身份</h3>'
+      + '<div class="id-card">'
+        + '<div class="id-avatar">' + esc(initial) + '</div>'
+        + '<div class="id-meta">'
+          + '<div class="id-name">' + esc(u.name) + '</div>'
+          + '<div class="id-role role-' + esc(role) + '">' + esc(role) + '</div>'
+        + '</div>'
+      + '</div>'
+      + '<ul class="id-list">'
+        + '<li><span>所属小组</span><b>' + esc(group) + '</b></li>'
+        + '<li><span>邮箱</span><b>' + esc(email) + '</b></li>'
+        + '<li><span>账号状态</span><b>' + esc(status) + '</b></li>'
+        + '<li><span>加入时间</span><b>' + esc(joined) + '</b></li>'
+      + '</ul>'
+      + '<div class="row" style="margin-top:16px">'
+        + '<button type="button" class="btn danger" id="idLogout" style="flex:1">退出登录</button>'
+        + '<button type="button" class="btn secondary" data-close style="flex:1">关闭</button>'
+      + '</div>';
+    openModal(html);
+    const lo = $('#idLogout'); if (lo) lo.addEventListener('click', () => { closeModal(); logout(); });
+    const cs = $('#modalBox [data-close]'); if (cs) cs.addEventListener('click', closeModal);
   }
 
   async function logout() {
@@ -396,19 +431,27 @@
           '<button class="btn" id="loginSubmit" style="width:100%;margin-top:8px">登录</button>' +
           '<div class="login-foot"><a href="#" id="loginForgot">忘记密码？</a></div>' +
         '</div>' +
-        (all.length ? '<div class="login-quick"><div class="login-quick-label">快捷选择</div>' +
-          all.map(d => '<button type="button" class="login-user' + (d.active === false ? ' is-inactive' : '') + '" data-email="' + esc(d.email) + '">' +
+        (all.length ? '<div class="login-quick"><div class="login-quick-label">快捷登录</div>' +
+          all.map(d => '<button type="button" class="login-user' + (d.active === false ? ' is-inactive' : '') + '" data-did="' + esc(d.id) + '">' +
             '<span class="lu-name">' + esc(d.name) + '</span>' +
             (d.active === false ? '<span class="lu-tag">已停用</span>' : '') +
             '<span class="lu-role role-' + esc(d.role) + '">' + esc(d.role) + '</span></button>').join('') +
+          '<div class="login-quick-hint" id="quickLoginHint" style="display:none;color:var(--error);font-size:12px;margin-top:4px">请输入密码后点击登录</div>' +
           '</div>' : '') +
       '</div>';
     const old = document.getElementById('loginOverlay'); if (old) old.remove();
     document.body.appendChild(ov);
     const submit = $('#loginSubmit');
-    if (submit) submit.addEventListener('click', () => doLogin($('#loginEmail').value, $('#loginPw').value));
+    if (submit) submit.addEventListener('click', () => { if (window._doLogin) window._doLogin($('#loginEmail').value, $('#loginPw').value); else doLogin($('#loginEmail').value, $('#loginPw').value); });
     const pw = $('#loginPw');
-    if (pw) pw.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin($('#loginEmail').value, $('#loginPw').value); });
+    if (pw) pw.addEventListener('keydown', e => { if (e.key === 'Enter') { if (window._doLogin) window._doLogin($('#loginEmail').value, $('#loginPw').value); else doLogin($('#loginEmail').value, $('#loginPw').value); } });
+    // 点击邮箱输入框时清除掩码，允许手动输入
+    const emInput = $('#loginEmail');
+    if (emInput) emInput.addEventListener('focus', () => {
+      if ((emInput.value || '').includes('已选择')) { emInput.value = ''; _quickLoginEmail = ''; }
+      $$('.login-quick .login-user').forEach(x => x.classList.remove('is-selected'));
+      const hint = $('#quickLoginHint'); if (hint) hint.style.display = 'none';
+    });
     const forgot = $('#loginForgot');
     if (forgot) forgot.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -417,10 +460,28 @@
       try { await DB.auth.resetPassword(email); toast('重置链接已发送至 ' + email); }
       catch (err) { const el = $('#loginErr'); if (el) el.textContent = (err && err.message) || '发送失败'; }
     });
+    // 快捷登录：点击名字后内部记录邮箱（不显示在页面上），提示输密码
+    let _quickLoginEmail = '';
     $$('.login-quick .login-user').forEach(b => b.addEventListener('click', () => {
-      const em = b.dataset.email;
-      if (em) { $('#loginEmail').value = em; $('#loginPw').focus(); }
+      const did = b.dataset.did;
+      const d = (state._designers || []).find(x => x.id === did);
+      if (d && d.email) {
+        _quickLoginEmail = d.email;
+        $('#loginEmail').value = '●●●●●● 已选择「' + esc(d.name) + '」';
+        $('#loginPw').focus();
+        const hint = $('#quickLoginHint');
+        if (hint) { hint.style.display = ''; hint.textContent = '已选择 ' + esc(d.name) + '，请输入密码后点登录'; }
+        // 高亮选中按钮
+        $$('.login-quick .login-user').forEach(x => x.classList.remove('is-selected'));
+        b.classList.add('is-selected');
+      }
     }));
+    // 登录时如果邮箱是掩码则用内部真实值
+    const origDoLogin = window._doLogin || doLogin;
+    window._doLogin = function(email, pw) {
+      const actualEmail = (email || '').includes('已选择') ? _quickLoginEmail : email;
+      return origDoLogin(actualEmail, pw);
+    };
   }
 
   /* ============================================================
@@ -445,11 +506,19 @@
   function updateSync() {
     const t = DB.getLastSync();
     const p = n => String(n).padStart(2, '0');
-    $('#syncStatus').textContent = '已同步 ' + p(t.getHours()) + ':' + p(t.getMinutes()) + ':' + p(t.getSeconds());
+    // 同步时间胶囊：实时显示当前时钟，方便一眼看出数据新鲜度
+    const now = new Date();
+    const elClock = $('#syncClock');
+    if (elClock) {
+      elClock.textContent = p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds());
+      const titleEl = $('#syncStatus');
+      if (titleEl) titleEl.title = '当前时间 ' + p(now.getHours()) + ':' + p(now.getMinutes()) + ' · 上次同步 ' + fmtTime(t);
+    }
     const badge = $('#modeBadge');
-    if (DB.getMode() === 'supabase') { badge.textContent = '☁ 云端同步'; badge.classList.add('cloud'); }
-    else { badge.textContent = '💾 本地模式'; badge.classList.remove('cloud'); }
-    updateConnStatus();
+    if (badge) {
+      if (DB.getMode() === 'supabase') { badge.textContent = '☁ 云端'; badge.classList.add('cloud'); }
+      else { badge.textContent = '💾 本地'; badge.classList.remove('cloud'); }
+    }
   }
 
   async function refreshAll() {
@@ -475,8 +544,180 @@
     applyPermissions();
   }
 
+  /* ============================================================
+   * 自定义日期选择器（不调系统弹窗）
+   * ============================================================ */
+  let _dpActive = null; // 当前激活的 input id
+  let _dpYear, _dpMonth; // 日历显示的年/月
+  function initDatePicker() {
+    const panel = $('#datePickerPanel');
+    // 点击 date-field 打开日历
+    document.addEventListener('click', e => {
+      const df = e.target.closest('.date-field[data-datepicker]');
+      if (df) {
+        e.stopPropagation();
+        openDatePicker(df.dataset.datepicker, df);
+        return;
+      }
+      // 点击面板外部关闭
+      if (_dpActive && !e.target.closest('.dp-panel')) closeDatePicker();
+    });
+    // 面板内按钮委托
+    panel.addEventListener('click', e => {
+      const t = e.target;
+      if (t.classList.contains('dp-prev')) { --_dpMonth; if (_dpMonth < 0) { _dpMonth = 11; _dpYear--; } renderDp(); return; }
+      if (t.classList.contains('dp-next')) { ++_dpMonth; if (_dpMonth > 11) { _dpMonth = 0; _dpYear++; } renderDp(); return; }
+      if (t.classList.contains('dp-day') && !t.classList.contains('dp-off') && !t.classList.contains('dp-dis')) {
+        const d = parseInt(t.dataset.d);
+        const val = _dpYear + '-' + String(_dpMonth + 1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+        const inp = document.getElementById(_dpActive);
+        if (inp) {
+          inp.value = val;
+          inp.dispatchEvent(new Event('change', {bubbles:true}));
+        }
+        closeDatePicker();
+      }
+    });
+  }
+  function openDatePicker(inputId, anchor) {
+    _dpActive = (inputId || '').replace(/^#/, '');
+    const panel = $('#datePickerPanel');
+    const inp = document.getElementById(_dpActive);
+    const val = inp ? inp.value : '';
+    const now = new Date();
+    if (val && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      const p = val.split('-'); _dpYear = parseInt(p[0]); _dpMonth = parseInt(p[1]) - 1;
+    } else { _dpYear = now.getFullYear(); _dpMonth = now.getMonth(); }
+    renderDp();
+    panel.style.display = '';
+    // 定位：桌面端在输入框下方；移动端由 CSS fixed 底部处理
+    if (window.innerWidth > 760) {
+      const r = anchor.getBoundingClientRect();
+      panel.style.left = Math.max(4, r.left) + 'px';
+      panel.style.top = (r.bottom + 4) + 'px';
+      panel.style.bottom = 'auto';
+    }
+  }
+  function closeDatePicker() {
+    _dpActive = null;
+    $('#datePickerPanel').style.display = 'none';
+  }
+  function renderDp() {
+    const panel = $('#datePickerPanel');
+    const y = _dpYear, m = _dpMonth;
+    const today = new Date(), todayStr = fmtISO(today);
+    const selInp = _dpActive ? document.getElementById(_dpActive) : null;
+    const selVal = selInp ? selInp.value : '';
+    const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+    const wk = ['日','一','二','三','四','五','六'];
+    const firstDay = new Date(y, m, 1).getDay();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    let html = '<div class="dp-hd">';
+    html += '<button class="dp-prev">◀</button>';
+    html += '<span>' + y + '年 ' + (monthNames[m]) + '</span>';
+    html += '<button class="dp-next">▶</button></div>';
+    html += '<div class="dp-wk">' + wk.map(w => '<div>'+w+'</div>').join('') + '</div>';
+    html += '<div class="dp-ds">';
+    // 空白填充
+    for (let i = 0; i < firstDay; i++) html += '<button class="dp-dis"></button>';
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = y + '-' + String(m+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+      const cls = ['dp-day'];
+      if (ds === todayStr) cls.push('dp-today');
+      if (ds === selVal) cls.push('dp-sel');
+      html += '<button class="' + cls.join(' ') + '" data-d="' + d + '">' + d + '</button>';
+    }
+    html += '</div>';
+    panel.innerHTML = html;
+  }
+  function fmtISO(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+
+  /* ============================================================
+   * 自定义下拉（替换原生 select，不调系统选择界面）
+   * ============================================================ */
+  function enhanceSelect(sel) {
+    if (!sel || sel.dataset.cst) return;
+    sel.dataset.cst = '1';
+    const wrap = document.createElement('div');
+    wrap.className = 'cst';
+    const btn = document.createElement('div');
+    btn.className = 'cst-select'; btn.tabIndex = 0;
+    const list = document.createElement('div');
+    list.className = 'cst-list';
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(btn);
+    wrap.appendChild(sel);
+    wrap.appendChild(list);
+    sel.style.position = 'absolute'; sel.style.opacity = '0';
+    sel.style.pointerEvents = 'none'; sel.style.width = '100%';
+    sel.style.height = '100%'; sel.style.top = '0'; sel.style.left = '0';
+    function render() {
+      btn.textContent = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
+      list.innerHTML = '';
+      Array.from(sel.options).forEach(opt => {
+        const o = document.createElement('div');
+        o.className = 'cst-opt' + (opt.value === sel.value ? ' sel' : '');
+        o.textContent = opt.text;
+        o.addEventListener('click', () => {
+          if (opt.value !== sel.value) {
+            sel.value = opt.value;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          close();
+        });
+        list.appendChild(o);
+      });
+    }
+    function open() { render(); list.classList.add('open'); btn.classList.add('open'); }
+    function close() { list.classList.remove('open'); btn.classList.remove('open'); }
+    btn.addEventListener('click', e => { e.stopPropagation(); list.classList.contains('open') ? close() : open(); });
+    btn.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); list.classList.contains('open') ? close() : open(); } });
+    sel.addEventListener('change', render);
+    document.addEventListener('click', e => { if (!wrap.contains(e.target)) close(); });
+    render();
+  }
+  // 自动增强：页面上任何 <select>（含弹窗内动态生成的）都会被替换
+  function observeSelects() {
+    const obs = new MutationObserver(muts => {
+      muts.forEach(m => m.addedNodes.forEach(n => {
+        if (n.nodeType !== 1) return;
+        if (n.tagName === 'SELECT' && !n.dataset.cst) enhanceSelect(n);
+        if (n.querySelectorAll) n.querySelectorAll('select:not([data-cst])').forEach(enhanceSelect);
+      }));
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    document.querySelectorAll('select:not([data-cst])').forEach(enhanceSelect);
+  }
+
+  /* ============================================================
+   * 自定义确认弹窗（替换原生 confirm，不调系统对话框）
+   * ============================================================ */
+  function uiConfirm(msg) {
+    return new Promise(resolve => {
+      const ov = document.createElement('div');
+      ov.className = 'modal-mask';
+      ov.innerHTML =
+        '<div class="modal" style="max-width:340px">' +
+          '<div class="modal-body" style="padding:18px 16px;font-size:14px;line-height:1.6">' + esc(msg) + '</div>' +
+          '<div class="modal-foot" style="padding:0 16px 16px">' +
+            '<button class="btn secondary" data-no>取消</button>' +
+            '<button class="btn" data-yes>确定</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(ov);
+      const done = v => { ov.remove(); resolve(v); };
+      ov.addEventListener('click', e => {
+        if (e.target === ov) done(false);
+        if (e.target.closest('[data-no]')) done(false);
+        if (e.target.closest('[data-yes]')) done(true);
+      });
+    });
+  }
+
   function bindGlobal() {
     $('#btnRefresh').addEventListener('click', () => { refreshAll(); toast('已刷新'); });
+    // 顶部同步时钟每 1 秒走一次（仅刷新文本，不重新查云端）
+    if (!state._clockTimer) state._clockTimer = setInterval(updateSync, 1000);
     $('#btnDashRefresh').addEventListener('click', () => { refreshAll(); toast('已刷新'); });
     $('#modalMask').addEventListener('click', e => { if (e.target.id === 'modalMask') closeModal(); });
     // 订单
@@ -494,8 +735,35 @@
     });
     $('#btnResetFilter').addEventListener('click', () => {
       state.filters = {}; $('#fStatus').value = ''; $('#fDesigner').value = ''; $('#fCustomer').value = ''; $('#fKeyword').value = '';
-      renderOrders();
+      renderOrders(); updateFilterBadge();
     });
+    // 筛选面板折叠/展开（仅移动端生效，桌面端始终展示）
+    const $toggle = $('#btnToggleFilter');
+    if ($toggle) {
+      $toggle.addEventListener('click', () => {
+        const $main = $toggle.closest('.toolbar-main');
+        if (!$main) return;
+        // 用 class 切换，避免内联 style 被 CSS 的 !important 规则压制
+        const open = $main.classList.toggle('show-filters');
+        $toggle.style.background = open ? 'var(--primary)' : '';
+        $toggle.style.color = open ? '#fff' : '';
+        $toggle.style.borderColor = open ? 'var(--primary)' : '';
+      });
+    }
+    // 筛选项变化时更新角标
+    ['fStatus', 'fDesigner', 'fCustomer'].forEach(id => {
+      $('#' + id).addEventListener('change', updateFilterBadge);
+    });
+    function updateFilterBadge() {
+      const $badge = $('#filterBadge');
+      if (!$badge) return;
+      let count = 0;
+      if ($('#fCustomer').value) count++;
+      if ($('#fDesigner').value) count++;
+      if ($('#fStatus').value) count++;
+      if (count > 0) { $badge.textContent = count; $badge.style.display = ''; }
+      else { $badge.style.display = 'none'; }
+    }
     // 设计师管理（在设置页）
     $('#btnAddDesigner').addEventListener('click', addDesigner);
     $('#btnAddGroup').addEventListener('click', addGroup);
@@ -505,6 +773,10 @@
     $('#anaMode').addEventListener('change', () => {
       $('#anaRangeBox').style.display = $('#anaMode').value === 'custom' ? '' : 'none';
     });
+    // 自定义日期选择器
+    initDatePicker();
+    // 自定义下拉（替换原生 select）
+    observeSelects();
     $('#btnAnaRefresh').addEventListener('click', renderAnalytics);
     $('#btnAnaMonth').addEventListener('click', renderConcurrencyDaily);
     $('#anaMonth').addEventListener('change', renderConcurrencyDaily);
@@ -513,9 +785,6 @@
     // 经营分析导出
     $('#btnAnaCSV').addEventListener('click', exportAnaCSV);
     // 设置
-    $('#btnSaveSupabase').addEventListener('click', saveSupabase);
-    $('#btnTestSupabase').addEventListener('click', testSupabase);
-    $('#btnReconnectSupabase').addEventListener('click', () => DB.reconnectSupabase());
     $('#btnSaveParams').addEventListener('click', saveParams);
     $('#btnExportAll').addEventListener('click', exportAll);
   }
@@ -554,8 +823,7 @@
       ['窗口营收', '¥' + money(c.totalRevenue), '全部订单累计'],
       ['窗口订单数', c.winOrders, '本月考核期内接单'],
       ['活跃设计师', c.designers, '在岗人数'],
-      ['客户 / 复购', c.customers + ' / ' + c.repeat, '复购=下单≥2次'],
-      ['团队奖', '¥' + money(await teamAwardNow(sum)), '按窗口营收']
+      ['客户 / 复购', c.customers + ' / ' + c.repeat, '复购=下单≥2次']
     ];
     $('#kpiGrid').innerHTML = kpis.map(k =>
       '<div class="kpi"><div class="label">' + k[0] + '</div><div class="value">' + k[1] + '</div><div class="label">' + k[2] + '</div></div>'
@@ -569,11 +837,10 @@
       return mine.reduce((s, o) => s + (Number(o.amount) || 0), 0);
     });
     Charts.bar($('#chartPerf'), {
-      title: '设计师业绩（窗口营收）与总绩效', horizontal: true,
+      title: '设计师业绩（窗口营收）', horizontal: true,
       labels: names,
       datasets: [
-        { label: '窗口营收(元)', data: revenue.map(v => Math.round(v)), color: '#4f46e5' },
-        { label: '总绩效(元)', data: ds.map(d => Math.round(d.totalPerf)), color: '#22c55e' }
+        { label: '窗口营收(元)', data: revenue.map(v => Math.round(v)), color: '#4f46e5' }
       ]
     });
     Charts.bar($('#chartRate'), {
@@ -591,11 +858,11 @@
 
     // 速览表
     $('#dashPerfTable').innerHTML =
-      '<thead><tr><th>设计师</th><th>接单</th><th>定稿数</th><th>定稿率</th><th>完成率</th><th>系数</th><th>小单</th><th>总绩效</th></tr></thead><tbody>' +
+      '<thead><tr><th>设计师</th><th>接单</th><th>定稿数</th><th>定稿率</th><th>完成率</th><th>系数</th><th>小单</th></tr></thead><tbody>' +
       (ds.length ? ds.map(d =>
         '<tr><td>' + esc(d.designerName) + '</td><td>' + d.total + '</td><td>' + d.finalizedCount + '</td><td>' + pct(d.rate) +
-        '</td><td>' + pct(d.completion) + '</td><td>' + d.coef + '</td><td>' + d.smallCount + '</td><td class="num">¥' + money(d.totalPerf) + '</td></tr>'
-      ).join('') : '<tr><td colspan="8" class="empty">暂无数据，请先在“设计师”与“订单”中录入</td></tr>') + '</tbody>';
+        '</td><td>' + pct(d.completion) + '</td><td>' + d.coef + '</td><td>' + d.smallCount + '</td></tr>'
+      ).join('') : '<tr><td colspan="7" class="empty">暂无数据，请先在“设计师”与“订单”中录入</td></tr>') + '</tbody>';
     applyPermissions();
   }
   async function teamAwardNow(sum) {
@@ -694,44 +961,49 @@
     return parts.join('');
   }
 
-  // 截稿时间选择器：日期 + 每 10 分钟的时间下拉 + 快捷预设；隐藏 #oDeadline 承载组合值
-  function deadlinePickerHtml(o) {
+  // 截稿时间选择器：日期 + 小时/分钟双下拉（仅内部字段，不含外层布局/快捷按钮）
+  function deadlineFieldsHtml(o) {
     const v = o.deadline ? toLocalInput(o.deadline) : '';
     const [date, time] = v ? v.split('T') : ['', ''];
-    const timeMM = time ? time.slice(0, 5) : '';
-    let opts = '<option value="">选择时间</option>';
+    const hh = time ? time.slice(0, 2) : '';
+    const mm = time ? time.slice(3, 5) : '';
+    let hOpts = '', mOpts = '';
     for (let h = 0; h < 24; h++) {
-      for (let m = 0; m < 60; m += 10) {
-        const hh = String(h).padStart(2, '0'), mm = String(m).padStart(2, '0');
-        const val = hh + ':' + mm;
-        opts += '<option value="' + val + '"' + (val === timeMM ? ' selected' : '') + '>' + val + '</option>';
-      }
+      const val = String(h).padStart(2, '0');
+      hOpts += '<option value="' + val + '"' + (val === hh ? ' selected' : '') + '>' + val + ' 时</option>';
     }
+    ['00', '10', '20', '30', '40', '50'].forEach(val => {
+      mOpts += '<option value="' + val + '"' + (val === mm ? ' selected' : '') + '>' + val + ' 分</option>';
+    });
     const presets = [['今天 18:00', 'today1800'], ['明天 18:00', 'tom1800'], ['3 天后', 'plus3']];
-    const hidden = (date && timeMM) ? (date + 'T' + timeMM) : '';
-    return ''
-      + '<div class="grid2-sm" style="margin-top:6px">'
-      +   '<div><label>截稿日期</label><input id="oDeadlineDate" type="date" value="' + date + '"></div>'
-      +   '<div><label>截稿时间（每 10 分钟）</label><select id="oDeadlineTime">' + opts + '</select></div>'
-      + '</div>'
-      + '<div style="margin-top:8px"><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">快捷设置</label>'
-      +   '<div class="chips">' + presets.map(p => '<button type="button" class="chip" data-dl-preset="' + p[1] + '">' + p[0] + '</button>').join('') + '</div></div>'
-      + '<input id="oDeadline" type="hidden" value="' + hidden + '">';
+    const hidden = (date && hh && mm) ? (date + 'T' + hh + ':' + mm) : '';
+    return {
+      fields: ''
+        + '<div class="dl-field"><label>截稿日期</label><input id="oDeadlineDate" type="date" value="' + date + '"></div>'
+        + '<div class="dl-time"><label>截稿时间</label><div class="dl-time-pair">'
+        +   '<select id="oDeadlineHour">' + hOpts + '</select>'
+        +   '<span class="dl-colon">:</span>'
+        +   '<select id="oDeadlineMin">' + mOpts + '</select>'
+        + '</div></div>'
+        + '<input id="oDeadline" type="hidden" value="' + hidden + '">',
+      presets: presets
+    };
   }
   function syncDeadline() {
-    const d = $('#oDeadlineDate'), t = $('#oDeadlineTime'), h = $('#oDeadline');
-    if (!d || !t || !h) return;
-    if (d.value && !t.value) t.value = '18:00'; // 选了日期但没选时间，默认 18:00
-    h.value = (d.value && t.value) ? (d.value + 'T' + t.value) : '';
+    const d = $('#oDeadlineDate'), hh = $('#oDeadlineHour'), mm = $('#oDeadlineMin'), h = $('#oDeadline');
+    if (!d || !hh || !mm || !h) return;
+    if (d.value && !hh.value) hh.value = '18';
+    if (d.value && !mm.value) mm.value = '00';
+    h.value = (d.value && hh.value && mm.value) ? (d.value + 'T' + hh.value + ':' + mm.value) : '';
   }
   function applyDeadlinePreset(kind) {
     const d = new Date();
     if (kind === 'tom1800') d.setDate(d.getDate() + 1);
     if (kind === 'plus3') d.setDate(d.getDate() + 3);
-    const ds = $('#oDeadlineDate'), ts = $('#oDeadlineTime');
-    if (!ds || !ts) return;
+    const ds = $('#oDeadlineDate'), hh = $('#oDeadlineHour'), mm = $('#oDeadlineMin');
+    if (!ds || !hh || !mm) return;
     const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-    ds.value = y + '-' + m + '-' + day; ts.value = '18:00';
+    ds.value = y + '-' + m + '-' + day; hh.value = '18'; mm.value = '00';
     syncDeadline();
   }
 
@@ -775,6 +1047,7 @@
     else if (o.status === '已换人') flow = '<span class="pill">已更换设计师</span>';
 
     // 订单信息表单（客户/金额/设计师/备注等）—— 详情模式下默认收起，不干扰流程查看
+    const dl = deadlineFieldsHtml(o);
     const infoForm = `
       <div class="compact-form">
         <div class="form-section">
@@ -801,11 +1074,12 @@
 
         <div class="form-section">
           <div class="form-sec-title">派单与协作</div>
-          <div class="grid2-sm">
-            <div class="field"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
-            <div class="field"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
+          <div class="dl-row">
+            <div class="field dl-des"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
+            ${dl.fields}
           </div>
-          <div class="field" style="margin-top:8px"><label>截稿时间（每 10 分钟）</label>${deadlinePickerHtml(o)}</div>
+          <div class="dl-presets"><label>快捷</label><div class="chips">${dl.presets.map(p => '<button type="button" class="chip" data-dl-preset="' + p[1] + '">' + p[0] + '</button>').join('')}</div></div>
+          <div class="field" style="margin-top:8px"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
         </div>
 
         <div class="form-section">
@@ -888,10 +1162,11 @@
 
         <div class="form-section">
           <div class="form-sec-title">派单与协作 <span class="muted" style="font-weight:400;font-size:11px">（可稍后在流程中派单）</span></div>
-          <div class="grid2-sm">
-            <div class="field"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
-            <div class="field"><label>截稿时间（每 10 分钟）</label>${deadlinePickerHtml(o)}</div>
+          <div class="dl-row">
+            <div class="field dl-des"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
+            ${dl.fields}
           </div>
+          <div class="dl-presets"><label>快捷</label><div class="chips">${dl.presets.map(p => '<button type="button" class="chip" data-dl-preset="' + p[1] + '">' + p[0] + '</button>').join('')}</div></div>
           <div class="field" style="margin-top:8px"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（2~3 人协同，各计 1 单）</span></label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
         </div>
 
@@ -967,7 +1242,8 @@
     // 截稿时间选择器：日期/时间联动 + 快捷预设
     if ($('#oDeadlineDate')) {
       $('#oDeadlineDate').addEventListener('change', syncDeadline);
-      $('#oDeadlineTime').addEventListener('change', syncDeadline);
+      $('#oDeadlineHour').addEventListener('change', syncDeadline);
+      $('#oDeadlineMin').addEventListener('change', syncDeadline);
       $$('#modalBox [data-dl-preset]').forEach(b => b.addEventListener('click', () => applyDeadlinePreset(b.dataset.dlPreset)));
     }
     $('#modalBox').addEventListener('click', (e) => {
@@ -1400,7 +1676,7 @@
   }
 
   async function delOrder(id) {
-    if (!confirm('确认删除该订单？此操作不可撤销。')) return;
+    if (!(await uiConfirm('确认删除该订单？此操作不可撤销。'))) return;
     try { await DB.deleteOrder(id); toast('已删除'); closeModal(); await refreshAll(); }
     catch (e) { toast('删除失败：' + e.message); }
   }
@@ -1635,7 +1911,8 @@
         const perfTitle = isAdmin ? '管理员默认不计入团队统计' : (can('manage_designers') ? '是否计入绩效/经营分析统计' : '无权限');
         const avgTitle = isAdmin ? '管理员默认不计入团队平均' : (can('manage_designers') ? '是否纳入团队人均/排名分母' : '无权限');
         return '<tr><td>' + esc(d.name) + '</td><td>' + esc(d.role) + '</td><td>' + (gMap[d.group_id] || '—') + '</td>' +
-        '<td class="num">' + inProgress(d.id) + '</td><td>' + (d.active === false ? '停用' : '在岗') + '</td>' +
+        '<td class="num">' + inProgress(d.id) + '</td>' +
+        '<td><button class="btn sm status-toggle ' + (d.active === false ? 'off' : 'on') + '" data-act="' + d.id + '"' + (disabled ? ' disabled' : '') + '>' + (d.active === false ? '停用' : '在岗') + '</button></td>' +
         '<td style="text-align:center"><input type="checkbox" class="design-cb" data-design="' + d.id + '"' + (designOn ? ' checked' : '') + (disabled ? ' disabled' : '') + ' title="' + designTitle + '"></td>' +
         '<td style="text-align:center"><input type="checkbox" class="perf-cb" data-perf="' + d.id + '"' + (perfOn ? ' checked' : '') + (disabled ? ' disabled' : '') + ' title="' + perfTitle + '"></td>' +
         '<td style="text-align:center"><input type="checkbox" class="avg-cb" data-avg="' + d.id + '"' + (avgOn ? ' checked' : '') + (disabled ? ' disabled' : '') + ' title="' + avgTitle + '"></td>' +
@@ -1645,7 +1922,7 @@
     $$('#settingsDesignersTable [data-pw]').forEach(b => b.addEventListener('click', () => setDesignerPassword(b.dataset.pw)));
     $$('#settingsDesignersTable [data-del]').forEach(b => b.addEventListener('click', async () => {
       if (!can('manage_designers')) { toast('无权限'); return; }
-      if (!confirm('删除人员？其 Auth 登录账号将被一并注销，订单将变为“未派”。')) return;
+      if (!(await uiConfirm('删除人员？其 Auth 登录账号将被一并注销，订单将变为“未派”。'))) return;
       const d = (state._designers || []).find(x => x.id === b.dataset.del);
       if (d && d.auth_id) {
         try { await DB.auth.deleteUser(d.auth_id); } catch (e) { toast((e && e.message) || '注销 Auth 账号失败'); }
@@ -1671,6 +1948,16 @@
       state._designers = await DB.listDesigners();
       toast(cb.checked ? '已纳入团队平均' : '已移出团队平均');
     }));
+    $$('#settingsDesignersTable .status-toggle').forEach(b => b.addEventListener('click', async () => {
+      if (!can('manage_designers')) { toast('无权限'); return; }
+      const d = (state._designers || []).find(x => x.id === b.dataset.act);
+      const willDisable = d && d.active !== false;
+      if (willDisable && !(await uiConfirm('停用该人员？其将不再出现在登录 / 派单 / 统计中（历史数据保留，可随时重新启用）。'))) return;
+      await DB.saveDesigner({ id: b.dataset.act, active: !willDisable });
+      state._designers = await DB.listDesigners();
+      toast(!willDisable ? '已启用（在岗）' : '已停用');
+      await refreshAll();
+    }));
     $('#settingsGroupsTable').innerHTML =
       '<thead><tr><th>分组</th><th>人数</th><th>操作</th></tr></thead><tbody>' +
       (gs.length ? gs.map(g =>
@@ -1678,7 +1965,7 @@
         '<td><button class="btn sm danger" data-gdel="' + g.id + '">删除</button></td></tr>'
       ).join('') : '<tr><td colspan="3" class="empty">暂无分组</td></tr>') + '</tbody>';
     $$('#settingsGroupsTable [data-gdel]').forEach(b => b.addEventListener('click', async () => {
-      if (!confirm('删除分组？')) return; await DB.deleteGroup(b.dataset.gdel); toast('已删除'); await refreshAll();
+      if (!(await uiConfirm('删除分组？'))) return; await DB.deleteGroup(b.dataset.gdel); toast('已删除'); await refreshAll();
     }));
     // 同步分组下拉
     fill('#dGroup', gs.map(g => [g.id, g.name]));
@@ -1846,7 +2133,7 @@
     $$('#customersTable [data-view]').forEach(b => b.addEventListener('click', () => viewCustomer(b.dataset.view)));
     $$('#customersTable [data-cdel]').forEach(b => b.addEventListener('click', async (e) => {
       e.stopPropagation(); if (!can('customers_edit')) { toast('无权限'); return; }
-      if (!confirm('删除客户？')) return; await DB.deleteCustomer(b.dataset.cdel); toast('已删除'); await refreshAll();
+      if (!(await uiConfirm('删除客户？'))) return; await DB.deleteCustomer(b.dataset.cdel); toast('已删除'); await refreshAll();
     }));
     $$('#customersTable tr[data-cid]').forEach(tr => tr.addEventListener('click', () => viewCustomer(tr.dataset.cid)));
     applyPermissions();
@@ -1902,23 +2189,23 @@
   }
 
   /* ============================================================
-   * 经营分析导出（含绩效工资列）
+   * 经营分析导出（含业绩指标）
    * ============================================================ */
   async function exportAnaCSV() {
     if (!state._ana) await renderAnalytics();
     const rep = state._ana;
-    const head = ['设计师', '角色', '派单量', '定稿率', '一次提案通过率', '初稿定稿率', '平均定稿时间(天)', '设计返工率', '定稿数', '完成率', '当前在制', '峰值并发', '小单有效', '营收', '系数', '小单提成', '小单扣减', '总绩效'];
+    const head = ['设计师', '角色', '派单量', '定稿率', '一次提案通过率', '初稿定稿率', '平均定稿时间(天)', '设计返工率', '定稿数', '完成率', '当前在制', '峰值并发', '小单有效', '营收', '系数'];
     const rows = rep.rows.map(r => [
       r.designerName, r.role, r.dispatchCount, pct(r.finalizeRate), pct(r.firstProposalPassRate),
       pct(r.draftToFinalizeRate), r.avgCycle ? r.avgCycle.toFixed(1) : '—', pct(r.reworkRate),
       r.finalizedCount, pct(r.completion), r.currentLoad, r.peakLoad, r.smallCount, money(r.revenue),
-      r.coef != null ? r.coef : '', money(r.smallBonus || 0), money(r.smallDeduction || 0), money(r.totalPerf != null ? r.totalPerf : 0)
+      r.coef != null ? r.coef : ''
     ]);
     const t = rep.totals;
-    rows.push(['团队汇总', '', '', '', '', '', '', '', '', '', '', '', '人均小单=' + t.teamAvgSmall, '营收=' + money(t.teamRevenue), '', '团队奖=' + money(t.teamAward), '', '绩效合计=' + money(t.totalPerfSum)]);
+    rows.push(['团队汇总', '', '', '', '', '', '', '', '', '', '', '', '人均小单=' + t.teamAvgSmall, '营收=' + money(t.teamRevenue)]);
     const fn = '经营分析_' + rep.range.start.toISOString().slice(0, 10) + '_' + rep.range.end.toISOString().slice(0, 10) + '.csv';
     downloadAOA([head].concat(rows), fn);
-    toast('已导出 CSV（含绩效工资）');
+    toast('已导出 CSV（含业绩指标）');
   }
   function downloadAOA(aoa, filename) {
     const csv = '﻿' + aoa.map(r => r.map(c => { const s = String(c ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',')).join('\r\n');
@@ -1937,15 +2224,6 @@
    * ============================================================ */
   async function renderSettings() {
     const s = state._settings || await DB.getSettings();
-    $('#sUrl').value = s.supabaseUrl || ''; $('#sKey').value = s.supabaseAnonKey || '';
-    // 部署级固定凭据：检测到 config.js 预置则锁定输入框，避免被界面误改
-    const presetUrl = (window.Cfg.SUPABASE_URL || '').trim();
-    const presetKey = (window.Cfg.SUPABASE_ANON_KEY || '').trim();
-    const presetActive = !!(presetUrl && presetKey);
-    const fixedHint = $('#cloudFixedHint');
-    $('#sUrl').disabled = presetActive; $('#sKey').disabled = presetActive;
-    $('#btnSaveSupabase').disabled = presetActive; $('#btnTestSupabase').disabled = presetActive;
-    if (fixedHint) fixedHint.style.display = presetActive ? '' : 'none';
     $('#sSmallMax').value = s.small_order_max; $('#sLargeMin').value = s.large_order_min;
     $('#sBase').value = s.base_perf_salary; $('#sTa1').value = s.team_award_t1; $('#sAa1').value = s.team_award_a1;
     $('#sTa2').value = s.team_award_t2; $('#sAa2').value = s.team_award_a2;
@@ -1953,56 +2231,6 @@
     await renderDesignerAdmin();
     renderPermConfig();
     applyPermissions();
-    updateConnStatus();
-  }
-  // 设置页连接状态面板
-  function updateConnStatus() {
-    const el = $('#connStatus'); if (!el) return;
-    const libOk = !!(window.supabase && window.supabase.createClient);
-    const s = state._settings || {};
-    const hasCred = !!(s.supabaseUrl && s.supabaseAnonKey);
-    const mode = DB.getMode();
-    const rows = [
-      ['Supabase 库', libOk ? '✅ 已加载' : '⚠️ 未加载（自动重试备用 CDN）'],
-      ['凭据配置', hasCred ? '✅ 已填写' : '⚠️ 未填写'],
-      ['当前模式', mode === 'supabase' ? '☁ 云端同步' : '💾 本地模式'],
-      ['上次同步', fmtTime(DB.getLastSync())]
-    ];
-    let html = rows.map(r => '<div class="kv"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>').join('');
-    if (s._schemaError) {
-      html += '<div class="kv" style="margin-top:8px;padding:8px;background:#fef2f2;border-radius:8px"><span style="color:#b91c1c">⚠️ ' + esc(s._schemaError) + '</span></div>';
-    }
-    if (s._cloudError) {
-      html += '<div class="kv" style="margin-top:8px;padding:8px;background:#fef2f2;border-radius:8px"><span style="color:#b91c1c">⚠️ ' + esc(s._cloudError) + '</span></div>';
-    }
-    el.innerHTML = html;
-  }
-  async function saveSupabase() {
-    // 部署级固定凭据时，界面不可修改
-    if ((window.Cfg.SUPABASE_URL || '').trim() && (window.Cfg.SUPABASE_ANON_KEY || '').trim()) {
-      toast('云端凭据已由部署配置（config.js）固定，无法在界面修改');
-      return;
-    }
-    const url = window.Cfg.normUrl($('#sUrl').value), key = $('#sKey').value.trim();
-    if (!url || !key) { toast('请先填写 URL 与 Key'); return; }
-    $('#sUrl').value = url; // 回写归一化后的 URL（去末尾斜杠）
-    await DB.saveSettings({ supabaseUrl: url, supabaseAnonKey: key });
-    toast('已保存，正在重新连接…');
-    // 重新初始化连接（会自动从备用 CDN 补加载 Supabase 库）
-    await DB.init();
-    await refreshAll(); updateSync(); updateConnStatus();
-    toast(DB.getMode() === 'supabase'
-      ? '☁ 已连接云端（刷新页面也会自动重连）'
-      : '仍使用本地模式（URL/Key 错误或网络异常）');
-  }
-  async function testSupabase() {
-    const url = window.Cfg.normUrl($('#sUrl').value), key = $('#sKey').value.trim();
-    if (!url || !key) { toast('请先填写 URL 与 Key'); return; }
-    try {
-      const tmp = window.supabase.createClient(url, key);
-      const { error } = await tmp.from('designers').select('count').limit(1);
-      if (error) toast('连接失败：' + error.message); else toast('连接成功 ✅');
-    } catch (e) { toast('连接异常：' + e.message); }
   }
   async function saveParams() {
     const num = (id) => Number($(id).value) || 0;
@@ -2053,9 +2281,7 @@
       ['设计返工率', pct(t.reworkRate), '设计责任返工 ÷ 已定稿'],
       ['当前在制', t.currentInProgress, '全组实时未结案'],
       ['峰值并发(单人最高)', t.peakConcurrency, '范围内单人同时最多'],
-      ['小单达标', sm.smallOkCount + '/' + sm.designerCount + ' 人', '≥' + sm.target + '单/人 · 人均' + sm.avgSmallTeam],
-      ['团队奖', '¥' + money(t.teamAward), '范围内全组营收达门槛发放'],
-      ['绩效合计', '¥' + money(t.totalPerfSum), '全员工资口径合计（系数+小单提成−扣减）']
+      ['小单达标', sm.smallOkCount + '/' + sm.designerCount + ' 人', '≥' + sm.target + '单/人 · 人均' + sm.avgSmallTeam]
     ];
     $('#kpiAna').innerHTML = kpis.map(k =>
       '<div class="kpi"><div class="label">' + k[0] + '</div><div class="value">' + k[1] + '</div><div class="label">' + k[2] + '</div></div>'
@@ -2093,61 +2319,19 @@
 
     // 设计师明细表（运营指标 + 工资核算，与绩效月报同源）
     $('#anaTable').innerHTML =
-      '<thead><tr><th>设计师</th><th>角色</th><th>派单量</th><th>定稿率</th><th>一次提案通过率</th><th>初稿定稿率</th><th>平均定稿时间(天)</th><th>设计返工率</th><th>定稿数</th><th>完成率</th><th>小单(达标)</th><th>营收</th><th>系数</th><th>小单提成</th><th>小单扣减</th><th>总绩效</th></tr></thead><tbody>' +
+      '<thead><tr><th>设计师</th><th>角色</th><th>派单量</th><th>定稿率</th><th>一次提案通过率</th><th>初稿定稿率</th><th>平均定稿时间(天)</th><th>设计返工率</th><th>定稿数</th><th>完成率</th><th>小单(达标)</th><th>营收</th><th>系数</th></tr></thead><tbody>' +
       (rows.length ? rows.map(r =>
         '<tr><td>' + esc(r.designerName) + '</td><td>' + esc(r.role) + '</td><td>' + r.dispatchCount + '</td>' +
         '<td>' + pct(r.finalizeRate) + '</td><td>' + pct(r.firstProposalPassRate) + '</td><td>' + pct(r.draftToFinalizeRate) + '</td><td>' + (r.avgCycle ? r.avgCycle.toFixed(1) : '—') + '</td><td>' + pct(r.reworkRate) + '</td>' +
         '<td>' + r.finalizedCount + '</td><td>' + pct(r.completion) + '</td>' +
         '<td>' + r.smallCount + ' <span class="badge ' + (r.smallOk ? 'ok' : 'bad') + '">' + (r.smallOk ? '达标' : '未达标') + '</span></td>' +
         '<td class="num">¥' + money(r.revenue) + '</td>' +
-        '<td><b>' + (r.coef != null ? r.coef : '—') + '</b></td>' +
-        '<td class="num">¥' + money(r.smallBonus || 0) + '</td>' +
-        '<td class="num">¥' + money(r.smallDeduction || 0) + '</td>' +
-        '<td class="num"><b>¥' + money(r.totalPerf != null ? r.totalPerf : 0) + '</b></td></tr>'
-      ).join('') : '<tr><td colspan="16" class="empty">暂无设计师或数据</td></tr>') + '</tbody>';
+        '<td><b>' + (r.coef != null ? r.coef : '—') + '</b></td></tr>'
+      ).join('') : '<tr><td colspan="13" class="empty">暂无设计师或数据</td></tr>') + '</tbody>';
 
-    renderAnaGantt(rep);
     renderAnaProjects(rep);
     await renderConcurrencyDaily();
-    // 系数阶梯说明（与绩效月报同源）
-    const s0 = state._settings || {};
-    $('#anaCoef').innerHTML = '<b>绩效系数阶梯（按定稿率）：</b><br>' +
-      '定稿率 &lt;65% → 0.8 ｜ 65%~70% → 0.9 ｜ 70%~75% → 1.0 ｜ 75%~80% → 1.1 ｜ 80%~85% → 1.2 ｜ 85%~90% → 1.3 ｜ ≥90% → 1.4<br>' +
-      '<span style="color:var(--muted)">总绩效 = 基础绩效工资（' + money(Number(s0.base_perf_salary) || 0) + '）× 系数 + 小单提成 − 小单扣减。' +
-      '小单提成：窗口内有效小单 &gt;10单按30元/单，&gt;5单按20元/单；低于人均小单数每少1单扣20元。定稿判定：修改≥2次不计入定稿。</span>';
     applyPermissions();
-  }
-
-  // 并发甘特图（HTML/CSS，直观展示同一设计师同步推进的单子）
-  function renderAnaGantt(rep) {
-    const range = rep.range;
-    const rStart = range.start.getTime(), rEnd = range.end.getTime();
-    let span = rEnd - rStart; if (span <= 0) span = 86400000;
-    const mid = new Date(rStart + span / 2);
-    let html = '<div class="gantt">' +
-      '<div class="g-axis"><span>' + fmtTime(range.start).slice(0, 10) + '</span>' +
-      '<span>' + fmtTime(mid).slice(0, 10) + '</span>' +
-      '<span>' + fmtTime(range.end).slice(0, 10) + '</span></div>';
-    rep.rows.forEach(r => {
-      const orders = rep.perOrder.filter(o => o.participantIds.includes(r.designerId));
-      html += '<div class="g-row"><div class="g-label">' + esc(r.designerName) + '<i>在制' + r.currentLoad + '/峰' + r.peakLoad + '</i></div><div class="g-track">';
-      orders.forEach(o => {
-        const s = o.dispatch_at ? new Date(o.dispatch_at).getTime() : rStart;
-        const e = o.finalized_at ? new Date(o.finalized_at).getTime()
-          : (o.switched_at ? new Date(o.switched_at).getTime() : Math.min(rEnd, Date.now()));
-        const ss = Math.max(s, rStart), ee = Math.min(e, rEnd);
-        if (ee <= ss) return;
-        const left = (ss - rStart) / span * 100;
-        const w = (ee - ss) / span * 100;
-        const color = (window.Cfg.STATUS[o.status] || {}).color || '#94a3b8';
-        const title = esc(o.order_no + ' ' + o.title + '｜' + o.participantNames.join('/') + '｜' + o.status +
-          (o.revision_count ? ('｜改' + o.revision_count) : '') + (o.complaint_count ? ('｜投诉' + o.complaint_count) : ''));
-        html += '<div class="g-bar" style="left:' + left.toFixed(2) + '%;width:' + Math.max(w, 1.5).toFixed(2) + '%;background:' + color + '" title="' + title + '"></div>';
-      });
-      html += '</div></div>';
-    });
-    html += '</div>';
-    $('#anaGantt').innerHTML = html;
   }
 
   // 项目改稿 / 返工 / 投诉明细

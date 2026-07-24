@@ -184,7 +184,17 @@ window.DB = (function () {
   async function list(table) { return cache[table].slice(); }
 
   async function save(table, row) {
-    const { error } = await sb.from(table).upsert(row, { onConflict: 'id' });
+    // 记录已存在 → 部分更新（只写传入字段，避免 upsert 整行覆盖导致 NOT NULL 列 400 错误）
+    const exists = cache[table] && cache[table].some(r => r.id === row.id);
+    let error;
+    if (exists) {
+      const { id, ...patch } = row;
+      const res = await sb.from(table).update(patch).eq('id', id);
+      error = res.error;
+    } else {
+      const res = await sb.from(table).upsert(row, { onConflict: 'id' });
+      error = res.error;
+    }
     if (error) {
       const msg = error.message || '';
       if (msg.includes('schema cache')) {
@@ -230,7 +240,9 @@ window.DB = (function () {
   /* ---------------- 实体便捷方法 ---------------- */
   async function listDesigners() { return list('designers'); }
   async function saveDesigner(d) {
-    d = Object.assign({ id: uid(), created_at: nowISO(), active: true }, d);
+    // 仅新建时补默认值；已存在记录（如勾选框部分更新）不覆盖 active 等字段
+    const exists = cache.designers && cache.designers.some(x => x.id === d.id);
+    if (!exists) d = Object.assign({ id: uid(), created_at: nowISO(), active: true }, d);
     return save('designers', d);
   }
   async function deleteDesigner(id) { return remove('designers', id); }

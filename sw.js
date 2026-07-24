@@ -5,7 +5,7 @@
  *  - 跨域 CDN（Supabase / Chart.js / xlsx）：stale-while-revalidate
  * 注意：所有预缓存路径使用相对路径，自动适配 GitHub Pages 子路径部署。
  */
-const CACHE = 'dw-pwa-v21';
+const CACHE = 'dw-pwa-v38';
 const PRECACHE = [
   './',
   './index.html',
@@ -25,10 +25,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE)
       .then((c) => c.addAll(PRECACHE))
-      .then(() => {
-        // 首次安装（无旧控制器）直接激活；已有版本则等待用户确认更新
-        if (!self.registration.active) self.skipWaiting();
-      })
+      .then(() => self.skipWaiting())  // 立即激活，不等旧版退出
   );
 });
 
@@ -67,14 +64,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 同源静态：cache-first
+  // 同源静态：network-first（开发期每次取最新，离线回退缓存）
   if (url.origin === self.location.origin) {
     event.respondWith(
-      caches.match(req).then((m) =>
-        m || fetch(req)
-          .then((res) => { cachePut(req, res.clone()); return res; })
-          .catch(() => m)
-      )
+      fetch(req)
+        .then((res) => { cachePut(req, res.clone()); return res; })
+        .catch(() => caches.match(req).then((m) => m || caches.match('./index.html')))
     );
     return;
   }
