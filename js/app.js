@@ -792,9 +792,10 @@
     // 解决首次启动 / F5 / 首次登录时，init 阶段以匿名身份探测误报"云端数据表缺字段"的问题。
     // 点顶部「重新连接云端」时 reconnectSupabase 也会探测（已登录态），逻辑一致、不会重复误报。
     try { await DB.probeSupabaseSchema(); } catch (e) { console.warn('schema 探测失败', e); }
-    // 关键：登录瞬间会话刚建立，settings 偶发未随 loadAll 返回（PostgREST 会话尚未生效），
-    // 导致权限配置回退到内置默认值。显式补拉 settings（带重试），确保以云端配置为准。
-    await ensureSettingsLoaded();
+    // 关键修复（消除登录「慢半拍」）：不再阻塞 await 等待云端 settings。
+    // 启动阶段 init() 已从 localStorage(ds_settings) 合并了「上一次成功加载的真实权限」
+    // （含管理员对职务/设计师的覆盖，见 db.js persistSettings()）。这里立即以其渲染，
+    // 云端对账放到后台，结果不同再无感重算权限——首屏即时、无需手刷、也无需苦等。
     state._settings = DB.getSettings(); // 刷新副本，确保读到探测写入的最新 _schemaError
     renderUserBox();
     applyPermissions();
@@ -811,26 +812,28 @@
     // 移动端轨道模式下，确保 track transform 与当前页对齐（避免初始状态或旋转后错位）
     if (isSwipeMode()) switchTabQuiet(state.tab);
     updateOverdueBadge();
-    // 自我修复：登录瞬间云端权限配置可能因会话尚未对 RLS 生效而读不到（回退内置默认），
-    // 延迟 2.5s 再补拉一次；一旦拿到与当前不同的权限配置，自动重算权限并刷新当前页，无需手动 F5。
-    setTimeout(async () => {
-      try {
-        const before = JSON.stringify((state._settings && state._settings.permissions) || null);
-        await DB.reloadSettings();
-        state._settings = DB.getSettings();
-        const after = JSON.stringify(state._settings.permissions || null);
-        if (after && after !== before) {
-          applyPermissions();
-          await renderTabContent(state.tab);
-          toast('权限配置已自动同步');
-        }
-      } catch (e) { console.warn('延迟补拉 settings 失败', e); }
-    }, 2500);
     if (state._settings && state._settings._schemaError) {
       toast(state._settings._schemaError);
     }
     updateSync();
     hideSplash();
+    // 后台对账（非阻塞）：补拉云端 settings（带重试），与当前缓存权限不同则自动重算并刷新。
+    // 即便首次启动无本地缓存，也能在数秒内从云端拿到真实权限自动修正，无需用户等待首屏。
+    ensureSettingsLoaded().then(() => {
+      try {
+        const before = JSON.stringify((state._settings && state._settings.permissions) || null);
+        const after = JSON.stringify((DB.getSettings() && DB.getSettings().permissions) || null);
+        if (after && after !== before) {
+          state._settings = DB.getSettings();
+          renderUserBox();
+          applyPermissions();
+          renderTabContent(state.tab);
+          toast('权限配置已自动同步');
+        } else {
+          state._settings = DB.getSettings();
+        }
+      } catch (e) { console.warn('后台对账 settings 失败', e); }
+    }).catch(() => {});
   }
 
   // 首次进入（无会话）：有设计师则登录；无设计师则初始化首个管理员
