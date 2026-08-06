@@ -1,0 +1,608 @@
+/* ============================================================
+ * db.js  —  统一数据层（纯 Supabase 云端模式）
+ *  认证：Supabase Auth（邮箱 + 密码）
+ *  数据：Supabase + Realtime 实时同步
+ *  对外暴露统一异步接口 DB.*，业务代码无需关心底层。
+ *  说明：已移除本地降级模式（纯云端，断网不可用）；service_role 仅存在于
+ *        Edge Function 服务端，前端永不持有。
+ * ============================================================ */
+window.DB = (function () {
+  const TABLES = ['designers', 'groups', 'customers', 'orders', 'settings'];
+
+  let sb = null;               // supabase client（始终连接云端）
+  let settings = Object.assign({}, window.Cfg.DEFAULT_SETTINGS);
+  const cache = { designers: [], groups: [], customers: [], orders: [] };
+  const listeners = new Set();
+  // 乐观更新防护：避免云端复制延迟把本端刚做的删除/修改被旧数据覆盖
+  const pendingDeleteIds = new Set();
+  const recentSaves = new Map();
+  const reconcileTimers = {};
+  let lastSync = new Date();
+  let unsubRealtime = null;
+
+  /* ---------------- 工具 ---------------- */
+  function uid() {
+    return (crypto && crypto.randomUUID) ? crypto.randomUUID()
+      : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+  }
+  function nowISO() { return new Date().toISOString(); }
+  function lsGet(k, def) {
+    try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; }
+    catch (e) { return def; }
+  }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  // 持久化 settings（含 permissions 权限配置）到 localStorage：
+  // 解决「登录瞬间会话未对 RLS 生效 → settings 查询返回空 → 权限回退 config.js 写死的默认值，
+  // 必须手动 F5 才能拿到云端真实权限（含管理员对个人/职务的覆盖）」的问题。
+  // 启动时 init() 会把 ds_settings 合并进内存 settings，因此即便云端首查失败，
+  // 登录瞬间也能用「上一次成功加载的权限」立即生效，后台再与云端对账。
+  function persistSettings() {
+    try {
+      const s = Object.assign({}, settings);
+      delete s._schemaError; delete s._cloudError;   // 不缓存瞬时错误标记
+      localStorage.setItem('ds_settings', JSON.stringify(s));
+    } catch (e) {}
+  }
+
+  function emit() {
+    lastSync = new Date();
+    listeners.forEach(fn => { try { fn(lastSync); } catch (e) { console.error(e); } });
+  }
+  function subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }
+  function getLastSync() { return lastSync; }
+  // 主动标记一次成功同步（手动刷新 / 重新连上云端时调用），用于更新同步时间显示
+  function markSynced() { lastSync = new Date(); }
+  function getMode() { return 'supabase'; }
+
+  /* ---------------- Supabase 库动态加载 ---------------- */
+  async function ensureSupabaseLib() {
+    if (window.supabase && window.supabase.createClient) return true;
+    // 优先加载本地 vendor（首屏已通过 <script defer> 预载，此处仅作兜底/离线保障，避免外网 CDN 延迟）
+    try {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'vendor/supabase.js?v=129'; s.async = true;
+        s.onload = () => res(); s.onerror = () => rej(new Error('load fail vendor/supabase.js'));
+        document.head.appendChild(s);
+      });
+      if (window.supabase && window.supabase.createClient) return true;
+    } catch (e) { console.warn('本地 Supabase UMD 加载失败，转 CDN 兜底:', e); }
+    const umd = [
+      'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+      'https://unpkg.com/@supabase/supabase-js@2'
+    ];
+    for (const src of umd) {
+      try {
+        await new Promise((res, rej) => {
+          const s = document.createElement('script');
+          s.src = src; s.async = true;
+          s.onload = () => res(); s.onerror = () => rej(new Error('load fail ' + src));
+          document.head.appendChild(s);
+        });
+        if (window.supabase && window.supabase.createClient) return true;
+      } catch (e) { console.warn('Supabase UMD CDN 加载失败:', src); }
+    }
+    try {
+      const mod = await import('https://esm.sh/@supabase/supabase-js@2');
+      window.supabase = mod.default || mod;
+      if (window.supabase && window.supabase.createClient) return true;
+    } catch (e) { console.warn('Supabase ESM 加载失败:', e); }
+    return false;
+  }
+
+  /* ---------------- 初始化 ---------------- */
+  async function init() {
+    if (unsubRealtime) { try { unsubRealtime(); } catch (e) {} unsubRealtime = null; }
+    const saved = lsGet('ds_settings', null);
+    if (saved && typeof saved === 'object') {
+      settings = Object.assign({}, window.Cfg.DEFAULT_SETTINGS, saved);
+    }
+    delete settings._cloudError;
+    const presetUrl = (window.Cfg && window.Cfg.SUPABASE_URL || '').trim();
+    const presetKey = (window.Cfg && window.Cfg.SUPABASE_ANON_KEY || '').trim();
+    const url = window.Cfg.normUrl(presetUrl || settings.supabaseUrl);
+    const key = (presetKey || settings.supabaseAnonKey || '').trim();
+    if (!url || !key) throw new Error('缺少 Supabase 配置：请在 config.js 填写 SUPABASE_URL / SUPABASE_ANON_KEY');
+    const ok = await ensureSupabaseLib();
+    if (!ok || !window.supabase || !window.supabase.createClient) throw new Error('Supabase 库加载失败，请检查网络');
+    sb = window.supabase.createClient(url, key, { realtime: { params: { eventsPerSecond: 20 } } });
+    settings.supabaseUrl = url; settings.supabaseAnonKey = key;
+    try { await loadDesignersOnly(); }
+    catch (e) { console.warn('初始设计师数据加载失败，将依赖实时同步补全', e); }
+    setupRealtime();
+    // 注意：schema 探测不再放在 init 里。
+    // 原因：init 阶段 Supabase 会话尚未恢复，前端以匿名身份调用会查不到 information_schema
+    //       （PostgREST 对系统视图的暴露/权限限制），导致"云端数据表缺字段"误报。
+    //       改为登录成功后由 app.js 的 afterLogin() 以「已认证身份」调用 DB.probeSupabaseSchema()。
+  }
+
+  // 匿名登录前只拉 designers（登录页快捷登录用）；大表(orders/customers/groups/settings)受 RLS 限制
+  // 匿名读不到，留待登录后 afterAuthLogin/bootAuth 调 reload() 时再全量拉取，避免白拉大表拖累启动
+  async function loadDesignersOnly() {
+    const { data } = await sb.from('designers').select('*');
+    cache.designers = mergeServer('designers', data);
+  }
+
+  // 各表独立加载，避免单表查询失败（如 orders 偶发超时 / RLS 抖动）连累 settings 等核心配置读不出。
+  // 之前用 Promise.all 一并拉取，任意一张表失败就会整体抛错，导致 F5 后 settings 回退到默认值
+  // （表现为「权限保存了但刷新又还原」「考核参数有时刷不出来」）。
+  async function loadAll() {
+    async function safe(table, fn) {
+      try { return await fn(); }
+      catch (e) { console.warn('[' + table + '] 加载失败，已隔离：', e && e.message); return null; }
+    }
+    const designers = await safe('designers', () => sb.from('designers').select('*'));
+    const groups = await safe('groups', () => sb.from('groups').select('*'));
+    const customers = await safe('customers', () => sb.from('customers').select('*'));
+    const orders = await safe('orders', () => sb.from('orders').select('*'));
+    const st = await safe('settings', () => sb.from('settings').select('*').eq('id', 1).maybeSingle());
+    cache.designers = mergeServer('designers', designers && designers.data);
+    cache.groups = mergeServer('groups', groups && groups.data);
+    cache.customers = mergeServer('customers', customers && customers.data);
+    cache.orders = mergeServer('orders', orders && orders.data);
+    if (st && st.data) { settings = Object.assign({}, settings, st.data); persistSettings(); }
+  }
+
+  // 与服务端数据对账：剔除本端已删除项、优先保留本端 3s 内刚保存的项
+  function mergeServer(table, serverData) {
+    const now = Date.now();
+    let data = (serverData || []).filter(r => !pendingDeleteIds.has(r.id));
+    const arr = data.map(r => {
+      if (recentSaves.has(r.id) && now - recentSaves.get(r.id) < 3000) {
+        const local = cache[table].find(x => x.id === r.id);
+        if (local) return local;
+      }
+      return r;
+    });
+    cache[table].forEach(local => {
+      if (!arr.find(r => r.id === local.id) && recentSaves.has(local.id) && now - recentSaves.get(local.id) < 3000) arr.push(local);
+    });
+    return arr;
+  }
+
+  // 探测云端 schema 是否已包含本程序新增字段；若迁移未执行则给出明确提示
+  // 注意：并行探测 + 不阻塞启动（init 里不 await，后台运行），缺字段时通过 settings._schemaError 提示
+  // 实现：调用服务端 RPC 函数 public.probe_schema_missing()
+  //   —— 原先前端直查 information_schema.columns 受 PostgREST REST 限制（不暴露 information_schema）
+  //      返回空/不全，导致"云端缺字段"误报。改由服务端函数直查，结果可靠。
+  async function probeSupabaseSchema() {
+    try {
+      const { data, error } = await sb.rpc('probe_schema_missing');
+      if (error) {
+        console.warn('[schema probe] rpc 调用失败，跳过探测（不影响正常使用）', error);
+        return; // 无法确认 → 不报错
+      }
+      const missing = Array.isArray(data) ? data : [];
+      if (missing.length) {
+        settings._schemaError =
+          '云端数据表缺字段，部分保存可能失败。请在 Supabase 后台 SQL Editor 中执行 sql/schema.sql 与 sql/enable_rls.sql（已含 add column if not exists，可重复执行）。' +
+          '执行后点顶部「重新连接云端」或刷新云端缓存。缺字段：' + missing.join('、') + '。';
+      } else {
+        delete settings._schemaError;
+      }
+    } catch (e) {
+      console.warn('[schema probe] 探测失败，跳过（不影响正常使用）', e);
+    }
+  }
+
+  function setupRealtime() {
+    const ch = sb.channel('ds-changes');
+    // 节流：同一时刻多张表变动合并为一次 loadAll（800ms 内只拉一次），避免抖动与浪费配额
+    let pending = false, timer = null;
+    TABLES.forEach(t => {
+      ch.on('postgres_changes', { event: '*', schema: 'public', table: t },
+        () => {
+          if (pending) return;
+          pending = true;
+          clearTimeout(timer);
+          timer = setTimeout(async () => { pending = false; try { await loadAll(); } catch (e) {} emit(); }, 800);
+        });
+    });
+    let retries = 0;
+    ch.subscribe((status, err) => {
+      if (status === 'SUBSCRIBED') { retries = 0; return; }
+      if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn('[Realtime] 频道异常(' + status + ')，尝试重建', err);
+        if (retries < 5) {
+          retries++;
+          setTimeout(() => {
+            try { sb.removeChannel(ch); } catch (e) {}
+            setupRealtime();
+          }, retries * 2000); // 递增退避
+        }
+      }
+    });
+    unsubRealtime = () => { try { sb.removeChannel(ch); } catch (e) {} };
+  }
+
+  /* ---------------- 设置 ---------------- */
+  // 设置字段白名单：saveSettings 只写传入的字段（部分更新），
+  // 避免"保存权限"时把内存中未加载的考核参数等字段以 undefined/null 覆盖库中正确值。
+  const SETTINGS_COLS = [
+    'small_order_max','large_order_min','base_perf_salary',
+    'team_award_t1','team_award_a1','team_award_t2','team_award_a2',
+    'small_order_target','win_start_day','win_end_day','risk_buffer_days',
+    'auto_dispatch','auto_dispatch_minutes','permissions'
+  ];
+  async function getSettings() { return Object.assign({}, settings); }
+  async function saveSettings(obj) {
+    settings = Object.assign({}, settings, obj);
+    persistSettings();   // 立即落盘，保证下次登录/刷新可即时用上最新权限配置
+    const payload = { id: 1 };
+    for (const k of SETTINGS_COLS) {
+      if (k in obj) payload[k] = obj[k];   // 只写调用方显式传入的字段
+    }
+    const { error } = await sb.from('settings').upsert(payload, { onConflict: 'id' });
+    if (error) throw error;
+    emit();
+  }
+  // 单独补拉 settings：登录瞬间会话刚建立，PostgREST 偶发尚未识别身份，
+  // 导致 loadAll 里的 settings 查询返回 {data:null, error}（非抛错，safe 捕获不到），
+  // settings 停留内置默认值，表现为「登录后权限是默认的，刷新才正确」。
+  // 这里单独重试一次，确保权限配置以云端为准。
+  async function reloadSettings() {
+    try {
+      const { data, error } = await sb.from('settings').select('*').eq('id', 1).maybeSingle();
+      if (error) { console.warn('[settings] 补拉失败：', error.message); return settings; }
+      if (data) { settings = Object.assign({}, settings, data); persistSettings(); }
+      return settings;
+    } catch (e) { console.warn('[settings] 补拉异常：', e && e.message); return settings; }
+  }
+
+  /* ---------------- 通用 CRUD ---------------- */
+  async function list(table) { return cache[table].slice(); }
+
+  async function save(table, row) {
+    // 记录已存在 → 部分更新（只写传入字段，避免 upsert 整行覆盖导致 NOT NULL 列 400 错误）
+    const exists = cache[table] && cache[table].some(r => r.id === row.id);
+    let error;
+    if (exists) {
+      const { id, ...patch } = row;
+      const res = await sb.from(table).update(patch).eq('id', id);
+      error = res.error;
+    } else {
+      const res = await sb.from(table).upsert(row, { onConflict: 'id' });
+      error = res.error;
+      // 订单号唯一约束冲突（并发新建场景）：重算单号后重试一次，避免产生重复单号
+      if (error && table === 'orders' && /duplicate|23505|order_no/.test(error.message || '') && row.order_no) {
+        try { row.order_no = await genOrderNo(); } catch (e) {}
+        const r2 = await sb.from(table).upsert(row, { onConflict: 'id' });
+        error = r2.error;
+      }
+    }
+    if (error) {
+      const msg = error.message || '';
+      if (msg.includes('schema cache')) {
+        throw new Error('云端 schema 缓存未刷新，无法保存。请在 Supabase 后台点击"Refresh schema"或等待 1~2 分钟后刷新页面。');
+      }
+      throw error;
+    }
+    upsertCache(table, row);
+    recentSaves.set(row.id, Date.now());
+    scheduleReconcile(table);
+    emit();
+    return row;
+  }
+
+  async function remove(table, id) {
+    const { error } = await sb.from(table).delete().eq('id', id);
+    if (error) throw error;
+    pendingDeleteIds.add(id);
+    cache[table] = cache[table].filter(r => r.id !== id);
+    scheduleReconcile(table);
+    emit();
+  }
+
+  function upsertCache(table, row) {
+    const arr = cache[table];
+    const i = arr.findIndex(r => r.id === row.id);
+    if (i >= 0) arr[i] = Object.assign({}, arr[i], row); else arr.push(row);
+  }
+
+  // 延迟 1.5s 与服务端对账（非阻塞），纠正其他端/服务端的改动
+  function scheduleReconcile(table) {
+    clearTimeout(reconcileTimers[table]);
+    reconcileTimers[table] = setTimeout(() => reconcile(table), 1500);
+  }
+  async function reconcile(table) {
+    try {
+      const res = await sb.from(table).select('*');
+      cache[table] = mergeServer(table, res.data);
+      emit();
+    } catch (e) { console.warn('后台对账失败（不影响本端显示）', e); }
+  }
+
+  /* ---------------- 实体便捷方法 ---------------- */
+  async function listDesigners() { return list('designers'); }
+  async function saveDesigner(d) {
+    // 仅新建时补默认值；已存在记录（如勾选框部分更新）不覆盖 active 等字段
+    const exists = cache.designers && cache.designers.some(x => x.id === d.id);
+    if (!exists) d = Object.assign({ id: uid(), created_at: nowISO(), active: true }, d);
+    return save('designers', d);
+  }
+  async function deleteDesigner(id) { return remove('designers', id); }
+
+  async function listGroups() { return list('groups'); }
+  async function saveGroup(g) {
+    g = Object.assign({ id: uid(), created_at: nowISO() }, g);
+    return save('groups', g);
+  }
+  async function deleteGroup(id) { return remove('groups', id); }
+
+  async function listCustomers() { return list('customers'); }
+  async function saveCustomer(c) {
+    const isEdit = !!c.id;
+    c = Object.assign({ id: uid(), created_at: nowISO() }, c);
+    try {
+      const saved = await save('customers', c);
+      if (isEdit) await cascadeCustomerName(c.id, c.name);
+      return saved;
+    } catch (e) {
+      // 兼容旧库尚未执行 schema.sql（缺 tag 列）：去掉 tag 重试，保证客户保存不被阻断
+      if (e && String(e.message || '').includes('tag') && c.tag !== undefined) {
+        delete c.tag;
+        const saved = await save('customers', c);
+        if (isEdit) await cascadeCustomerName(c.id, c.name);
+        return saved;
+      }
+      throw e;
+    }
+  }
+  async function cascadeCustomerName(customerId, name) {
+    if (!customerId) return;
+    try {
+      const { error } = await sb.from('orders').update({ customer_name: name }).eq('customer_id', customerId);
+      if (error) console.warn('级联更新订单客户名失败', error);
+    } catch (e) { console.warn('级联更新订单客户名失败', e); }
+    cache.orders.forEach(o => { if (o.customer_id === customerId) o.customer_name = name; });
+    emit();
+  }
+  async function deleteCustomer(id) { return remove('customers', id); }
+
+  // 仅更新某客户的 contacts_json（供 app.js 在订单弹窗内快捷添加联系人时调用，
+  // 避免直接访问未导出的内部 supabase client `sb`）
+  async function saveCustomerContacts(cid, contacts) {
+    const { error } = await sb.from('customers').update({ contacts_json: contacts }).eq('id', cid);
+    if (error) throw error;
+    return true;
+  }
+
+  async function listOrders(filter) {
+    let arr = cache.orders.slice();
+    if (filter) {
+      const kw = (filter.keyword || '').trim().toLowerCase();
+      arr = arr.filter(o => {
+        if (filter.status && o.status !== filter.status) return false;
+        if (filter.designerId && o.assigned_designer_id !== filter.designerId) return false;
+        if (filter.customerId && o.customer_id !== filter.customerId) return false;
+        if (filter.taskType && o.task_type !== filter.taskType) return false;
+        if (filter.category) {
+          const cat = window.Cfg.orderCategory(Number(o.amount) || 0, settings);
+          if (cat !== filter.category) return false;
+        }
+        if (filter.dateFrom || filter.dateTo) {
+          const t = o.intake_at ? o.intake_at.slice(0, 10) : '';
+          if (filter.dateFrom && t < filter.dateFrom) return false;
+          if (filter.dateTo && t > filter.dateTo) return false;
+        }
+        if (kw && !((o.title || '').toLowerCase().includes(kw) ||
+                   (o.order_no || '').toLowerCase().includes(kw) ||
+                   (o.customer_name || '').toLowerCase().includes(kw))) return false;
+        return true;
+      });
+    }
+    return arr;
+  }
+  async function saveOrder(o) {
+    const id = (o && o.id) ? o.id : uid();
+    o = Object.assign({ created_at: nowISO(), revision_count: 0, is_finalized: false,
+      collab_designer_ids: [], rework_category: '', revision_note: '', complaint_count: 0, proposal_count: 0, file_paths: [], design_paths: [],
+      revision_at: null, redraft_at: null, feedback_failed_at: null, feedback_pass_at: null,
+      proposal_log: [], proposal_failed_log: [], draft_log: [], revision_log: [],
+      redraft_log: [], feedback_failed_log: [], complaint_log: [] }, o, { id });
+    return save('orders', o);
+  }
+  async function deleteOrder(id) { return remove('orders', id); }
+
+  /* ---------------- 操作日志 ---------------- */
+  // 旁路写入：不阻塞主流程，写入失败只告警不抛错
+  function logOperation(entry) {
+    if (!sb) return;
+    if (!entry || !entry.action) return;
+    const row = {
+      id: uid(),
+      designer_id: entry.designerId || null,
+      designer_name: entry.designerName || '',
+      action: entry.action,
+      target_type: entry.targetType || null,
+      target_id: entry.targetId || null,
+      target_label: entry.targetLabel || null,
+      detail: entry.detail || null,
+      created_at: nowISO()
+    };
+    sb.from('operation_logs').insert(row)
+      .then(() => {})
+      .catch(e => console.warn('操作日志写入失败（不影响主操作）', e));
+  }
+  async function queryLogs(filter) {
+    if (!sb) return [];
+    filter = filter || {};
+    let q = sb.from('operation_logs').select('*')
+      .order('created_at', { ascending: false })
+      .limit(filter.limit || 300);
+    if (filter.designerId) q = q.eq('designer_id', filter.designerId);
+    if (filter.action) q = q.eq('action', filter.action);
+    if (filter.from) q = q.gte('created_at', filter.from + 'T00:00:00');
+    if (filter.to) q = q.lte('created_at', filter.to + 'T23:59:59');
+    const { data, error } = await q;
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function reconnectSupabase() {
+    await probeSupabaseSchema();
+    const err = settings._schemaError;
+    if (err) toast(err); else toast('云端 schema 探测正常 ✅');
+  }
+
+  // 生成订单号 YYMMDD-序号（年份取后两位，如 260728-001）
+  // 优先查 Supabase 实时最大号（防并发冲突），离线时降级本地缓存
+  async function genOrderNo() {
+    const d = new Date();
+    const prefix = String(d.getFullYear()).slice(-2) +
+      String(d.getMonth() + 1).padStart(2, '0') +
+      String(d.getDate()).padStart(2, '0') + '-';
+    let max = 0;
+
+    // 1) 查询 Supabase 今天已有的最大订单号（最权威，避免多人并发拿到相同序号）
+    try {
+      const { data, error } = await sb.from('orders')
+        .select('order_no')
+        .like('order_no', prefix + '%')
+        .order('order_no', { ascending: false })
+        .limit(1);
+      if (!error && data && data.length > 0) {
+        const n = parseInt(data[0].order_no.slice(prefix.length), 10);
+        if (!isNaN(n) && n > max) max = n;
+      }
+    } catch (e) { /* 查询失败时降级 */ }
+
+    // 2) 合并本地缓存（可能存在尚未同步到 Supabase 的离线新建订单）
+    cache.orders.forEach(o => {
+      if (o.order_no && o.order_no.startsWith(prefix)) {
+        const n = parseInt(o.order_no.slice(prefix.length), 10);
+        if (!isNaN(n) && n > max) max = n;
+      }
+    });
+
+    return prefix + String(max + 1).padStart(3, '0');
+  }
+
+  /* ---------------- 认证（Supabase Auth） ---------------- */
+  async function authSignIn(email, password) {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    return data;
+  }
+  async function authSignOut() {
+    const { error } = await sb.auth.signOut();
+    if (error) throw error;
+  }
+  async function authGetSession() {
+    const { data } = await sb.auth.getSession();
+    return data.session;
+  }
+  function authOnChange(cb) {
+    const { data } = sb.auth.onAuthStateChange((_event, session) => cb(session));
+    return data; // subscription，可 .unsubscribe()
+  }
+  // 首次登录后绑定设计师档案（auth_id = 当前登录用户）
+  async function authBindProfile(row) {
+    const { data: { user }, error } = await sb.auth.getUser();
+    if (error || !user) throw new Error('未登录，无法绑定档案');
+    const d = Object.assign({ id: uid(), created_at: nowISO(), active: true,
+      auth_id: user.id, email: user.email || '' }, row);
+    return save('designers', d);
+  }
+  async function authResetPassword(email) {
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin });
+    if (error) throw error;
+  }
+  // 本人修改自己的登录密码：先校验当前密码（重新登录验证身份），再用客户端 API 更新。
+  // 不依赖 service_role / Edge Function，任何已登录用户（设计师 / 店长 / 管理员）均可使用。
+  async function authUpdateSelfPassword(oldPw, newPw) {
+    const { data: { session } } = await sb.auth.getSession();
+    const email = session && session.user && session.user.email;
+    if (!email) throw new Error('未获取到登录邮箱，无法修改密码');
+    if (!oldPw) throw new Error('请输入当前密码');
+    // 先以当前密码重新登录，验证身份
+    const { error: signErr } = await sb.auth.signInWithPassword({ email, password: oldPw });
+    if (signErr) throw new Error('当前密码不正确');
+    // 验证通过后更新密码（沿用当前会话的已认证身份）
+    const { error } = await sb.auth.updateUser({ password: newPw });
+    if (error) throw error;
+    return true;
+  }
+  // 管理员新增人员：调 Edge Function 建 Auth 账号（service_role 在服务端）
+  async function authCreateUser(payload) {
+    const { data: { session } } = await sb.auth.getSession();
+    const token = session && session.access_token;
+    if (!token) throw new Error('未登录');
+    const base = (settings.supabaseUrl || '').replace(/\/$/, '');
+    const res = await fetch(base + '/functions/v1/create-user', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token,
+        'apikey': settings.supabaseAnonKey || ''
+      },
+      body: JSON.stringify(payload)
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || '创建账号失败');
+    return j; // { id, email }
+  }
+  // 删除设计师时连带删除 Auth 账号
+  async function authDeleteUser(authId) {
+    const { data: { session } } = await sb.auth.getSession();
+    const token = session && session.access_token;
+    if (!token) throw new Error('未登录');
+    const base = (settings.supabaseUrl || '').replace(/\/$/, '');
+    const res = await fetch(base + '/functions/v1/delete-user', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token,
+        'apikey': settings.supabaseAnonKey || ''
+      },
+      body: JSON.stringify({ auth_id: authId })
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || '删除账号失败');
+    return j;
+  }
+
+  // 管理员修改设计师密码：调 Edge Function（service_role 更新 Auth 用户）
+  async function authSetPassword(payload) {
+    const { data: { session } } = await sb.auth.getSession();
+    const token = session && session.access_token;
+    if (!token) throw new Error('未登录');
+    const base = (settings.supabaseUrl || '').replace(/\/$/, '');
+    const res = await fetch(base + '/functions/v1/set-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token,
+        'apikey': settings.supabaseAnonKey || ''
+      },
+      body: JSON.stringify(payload)
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || '修改密码失败');
+    return j;
+  }
+
+  const auth = {
+    signIn: authSignIn,
+    signOut: authSignOut,
+    getSession: authGetSession,
+    onChange: authOnChange,
+    bindProfile: authBindProfile,
+    resetPassword: authResetPassword,
+    updateSelfPassword: authUpdateSelfPassword,
+    createUser: authCreateUser,
+    deleteUser: authDeleteUser,
+    setPassword: authSetPassword
+  };
+
+  return {
+    init, subscribe, getLastSync, getMode, markSynced, reload: loadAll,
+    getSettings, saveSettings, reloadSettings, probeSupabaseSchema,
+    listDesigners, saveDesigner, deleteDesigner,
+    listGroups, saveGroup, deleteGroup,
+    listCustomers, saveCustomer, saveCustomerContacts, deleteCustomer, cascadeCustomerName,
+    listOrders, saveOrder, deleteOrder, genOrderNo, reconnectSupabase,
+    logOperation, queryLogs,
+    auth
+  };
+})();
