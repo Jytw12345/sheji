@@ -784,10 +784,10 @@
   async function ensureSettingsLoaded(tries) {
     tries = tries || 6;
     for (let i = 0; i < tries; i++) {
-      const s = DB.getSettings();
+      const s = await DB.getSettings();          // 注意：getSettings 是 async，必须 await，否则拿到 Promise
       if (s && s.permissions) return;            // 已拿到云端权限配置
       try { await DB.reloadSettings(); } catch (e) { console.warn('补拉 settings 失败', e); }
-      const s2 = DB.getSettings();
+      const s2 = await DB.getSettings();
       if (s2 && s2.permissions) return;          // 补拉后再次确认
       if (i < tries - 1) await new Promise(r => setTimeout(r, 500)); // 给会话生效一点时间
     }
@@ -803,7 +803,11 @@
     // 启动阶段 init() 已从 localStorage(ds_settings) 合并了「上一次成功加载的真实权限」
     // （含管理员对职务/设计师的覆盖，见 db.js persistSettings()）。这里立即以其渲染，
     // 云端对账放到后台，结果不同再无感重算权限——首屏即时、无需手刷、也无需苦等。
-    state._settings = DB.getSettings(); // 刷新副本，确保读到探测写入的最新 _schemaError
+    // 【关键】DB.getSettings() 是 async 函数，必须 await。
+    // 历史 bug：此处漏写 await，state._settings 被赋成一个 Promise 对象，
+    // 于是 permConfig() 读 state._settings.permissions 恒为 undefined → 回退 config.js 内置默认权限，
+    // 表现为「登录后是默认权限、刷新才是真实权限」（刷新时 loadData 用 Promise.all 隐式 await 了，故正常）。
+    state._settings = await DB.getSettings(); // 刷新副本，确保读到探测写入的最新 _schemaError
     renderUserBox();
     applyPermissions();
     // 登录后工作台默认显示本人看板：把当前设计师设为默认选中（无 view_all 时强制锁定本人，
@@ -827,18 +831,17 @@
     // 后台对账（非阻塞）：用稳健方式再补拉一次云端 settings（已认证会话就绪 + 重试），
     // 与当前权限不同则无感重算并刷新。即便是首次启动无本地缓存，也能在登录流程内
     // 由 loadSettingsRobust 直接拿到真实权限，此处作为边缘兜底（如服务端权限被改）。
-    DB.loadSettingsRobust().then(() => {
+    DB.loadSettingsRobust().then(async () => {
       try {
         const before = JSON.stringify((state._settings && state._settings.permissions) || null);
-        const after = JSON.stringify((DB.getSettings() && DB.getSettings().permissions) || null);
-        if (after && after !== before) {
-          state._settings = DB.getSettings();
+        const fresh = await DB.getSettings();   // 必须 await：漏写会把 Promise 存进 state._settings
+        const after = JSON.stringify((fresh && fresh.permissions) || null);
+        state._settings = fresh;
+        if (after !== 'null' && after !== before) {
           renderUserBox();
           applyPermissions();
           renderTabContent(state.tab);
           toast('权限配置已自动同步');
-        } else {
-          state._settings = DB.getSettings();
         }
       } catch (e) { console.warn('后台对账 settings 失败', e); }
     }).catch(() => {});
