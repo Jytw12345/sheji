@@ -248,6 +248,39 @@ window.DB = (function () {
       return settings;
     } catch (e) { console.warn('[settings] 补拉异常：', e && e.message); return settings; }
   }
+  // 登录后稳健加载云端真实权限：根除「登录即默认、刷新才真实」的时序竞态（根因修复版）。
+  // 根因：signInWithPassword 刚成功时，新建会话的 JWT 偶发尚未被 PostgREST 识别
+  // （RLS 的 to authenticated 把它当匿名 → settings 查询返回空），要等会话在 GoTrue/PostgREST
+  // 侧完全生效（通常数百毫秒 ~ 数秒）查询才成功；而 F5 时会话早已稳定，所以一次就成功。
+  // 本函数：先轮询确认已认证会话就绪（最多 ~1.5s），再多次重试拉取 settings，
+  // 一旦拿到含 permissions 的真实配置立即返回，绝不回退到内置默认。
+  // 即使 localStorage 无缓存（首次登录），也能在登录流程内直接拿到真实权限渲染，无需手动刷新。
+  async function loadSettingsRobust() {
+    // 1) 确认已认证会话就绪：signIn 后客户端会话已设，但服务端 JWT 可能尚未对 PostgREST 生效，
+    //    轮询 getSession 直到拿到 user（最多约 1.5s），确保首个查询携带有效身份。
+    for (let i = 0; i < 6; i++) {
+      try {
+        const { data } = await sb.auth.getSession();
+        if (data && data.session && data.session.user) break;
+      } catch (e) {}
+      if (i < 5) await new Promise(r => setTimeout(r, 250));
+    }
+    // 2) 重试拉取 settings，拿到含 permissions 的真实配置即返回（上限约 1.6s）。
+    for (let i = 0; i < 4; i++) {
+      try {
+        const { data, error } = await sb.from('settings').select('*').eq('id', 1).maybeSingle();
+        if (!error && data) {
+          settings = Object.assign({}, settings, data);
+          persistSettings();
+          if (data.permissions) return settings;   // 拿到真实权限，立即返回
+        } else if (error) {
+          console.warn('[settings] 拉取失败(' + (i + 1) + ')：', error.message);
+        }
+      } catch (e) { console.warn('[settings] 拉取异常(' + (i + 1) + ')', e); }
+      if (i < 3) await new Promise(r => setTimeout(r, 400));
+    }
+    return settings;
+  }
 
   /* ---------------- 通用 CRUD ---------------- */
   async function list(table) { return cache[table].slice(); }
@@ -597,7 +630,7 @@ window.DB = (function () {
 
   return {
     init, subscribe, getLastSync, getMode, markSynced, reload: loadAll,
-    getSettings, saveSettings, reloadSettings, probeSupabaseSchema,
+    getSettings, saveSettings, reloadSettings, loadSettingsRobust, probeSupabaseSchema,
     listDesigners, saveDesigner, deleteDesigner,
     listGroups, saveGroup, deleteGroup,
     listCustomers, saveCustomer, saveCustomerContacts, deleteCustomer, cascadeCustomerName,

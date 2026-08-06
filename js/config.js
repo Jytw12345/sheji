@@ -52,35 +52,35 @@ window.Cfg = (function () {
     { key: 'menu_dashboard', label: '仪表盘', group: 'menu', def: { 管理员: true, 店长: true, 设计师: true } },
     { key: 'menu_orders', label: '订单', group: 'menu', def: { 管理员: true, 店长: true, 设计师: true } },
     { key: 'menu_workbench', label: '工作台', group: 'menu', def: { 管理员: true, 店长: true, 设计师: true } },
-    { key: 'menu_customers', label: '客户', group: 'menu', def: { 管理员: true, 店长: true, 设计师: false } },
-    { key: 'menu_analytics', label: '经营分析', group: 'menu', def: { 管理员: true, 店长: true, 设计师: false } },
+    { key: 'menu_customers', label: '客户', group: 'menu', def: { 管理员: true, 店长: true, 设计师: true } },
+    { key: 'menu_analytics', label: '经营分析', group: 'menu', def: { 管理员: true, 店长: true, 设计师: true } },
     { key: 'menu_settings', label: '设置', group: 'menu', def: { 管理员: true, 店长: false, 设计师: false } },
 
     // —— 订单 ——
-    { key: 'orders_create', label: '新建订单', group: 'order', def: { 管理员: true, 店长: true, 设计师: false } },
+    { key: 'orders_create', label: '新建订单', group: 'order', def: { 管理员: true, 店长: true, 设计师: true } },
     { key: 'orders_edit', label: '查看/编辑订单详情', group: 'order', def: { 管理员: true, 店长: true, 设计师: true } },
     { key: 'orders_delete', label: '删除订单', group: 'order', def: { 管理员: true, 店长: false, 设计师: false } },
     { key: 'orders_export', label: '导出订单', group: 'order', def: { 管理员: true, 店长: true, 设计师: false } },
     { key: 'flow_advance', label: '推进流程（派单/提案/定稿等）', group: 'order', def: { 管理员: true, 店长: true, 设计师: true } },
-    { key: 'flow_revert', label: '回退流程（撤销误推进，可按职务开放）', group: 'order', def: { 管理员: true, 店长: false, 设计师: false } },
+    { key: 'flow_revert', label: '回退流程（撤销误推进，可按职务开放）', group: 'order', def: { 管理员: true, 店长: true, 设计师: false } },
     { key: 'complaint_add', label: '记录投诉 / 修改原因', group: 'order', def: { 管理员: true, 店长: true, 设计师: false } },
 
     // —— 客户 ——
-    { key: 'customers_create', label: '新建客户', group: 'customer', def: { 管理员: true, 店长: true, 设计师: false } },
-    { key: 'customers_edit', label: '编辑客户', group: 'customer', def: { 管理员: true, 店长: true, 设计师: false } },
+    { key: 'customers_create', label: '新建客户', group: 'customer', def: { 管理员: true, 店长: true, 设计师: true } },
+    { key: 'customers_edit', label: '编辑客户', group: 'customer', def: { 管理员: true, 店长: true, 设计师: true } },
     { key: 'customers_delete', label: '删除客户', group: 'customer', def: { 管理员: true, 店长: false, 设计师: false } },
 
     // —— 数据范围 ——
     { key: 'analytics_export', label: '导出经营分析（含业绩指标）', group: 'data', def: { 管理员: true, 店长: true, 设计师: false } },
-    { key: 'view_all_orders', label: '查看全部订单（含他人，用于协同看板）', group: 'data', def: { 管理员: true, 店长: true, 设计师: false } },
+    { key: 'view_all_orders', label: '查看全部订单（含他人，用于协同看板）', group: 'data', def: { 管理员: true, 店长: true, 设计师: true} },
     { key: 'view_logs', label: '查看操作日志（人员操作记录）', group: 'data', def: { 管理员: true, 店长: true, 设计师: false } },
     // 注：设计师默认只能看本人参与的单；管理员可在「权限配置」按设计师开启 view_all_orders，
     // 让其看到团队全部订单（协同/看板用）。底层依赖 enable_rls.sql 已放开 orders 读权限给所有登录用户，
     // 由本权限点做前端可见性校验（RLS 为地板，权限为 UX 开关）。详见 app.js 的 isViewAll()。
 
     // —— 系统管理 ——
-    { key: 'manage_designers', label: '管理设计师 / 分组', group: 'system', def: { 管理员: true, 店长: false, 设计师: false } },
-    { key: 'manage_settings', label: '系统设置（云端 / 考核参数）', group: 'system', def: { 管理员: true, 店长: false, 设计师: false } },
+    { key: 'manage_designers', label: '管理设计师 / 分组', group: 'system', def: { 管理员: true, 店长: true, 设计师: false } },
+    { key: 'manage_settings', label: '系统设置（云端 / 考核参数）', group: 'system', def: { 管理员: true, 店长: true, 设计师: false } },
     { key: 'manage_data', label: '数据管理（清空 / 导入）', group: 'system', def: { 管理员: true, 店长: false, 设计师: false } },
     { key: 'manage_permissions', label: '权限配置', group: 'system', def: { 管理员: true, 店长: false, 设计师: false } }
   ];

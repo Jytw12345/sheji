@@ -751,7 +751,7 @@
     // 关键：登录成功后用「已认证身份」重拉全量数据。
     // 页面刚打开时 loadAll 以匿名身份执行，RLS 下拉到的是空数据，
     // 若直接用旧缓存匹配档案会误判「无档案」而弹出绑定页（导致重复建档案）。
-    try { await DB.reload(); await loadData(); } catch (e) { console.warn('登录后重载数据失败', e); }
+    try { await DB.reload(); await DB.loadSettingsRobust(); await loadData(); } catch (e) { console.warn('登录后重载数据失败', e); }
     const me = (state._designers || []).find(d => d.auth_id && d.auth_id === session.user.id);
     if (me) { state.currentUser = me; await afterLogin(); return; }
     renderBindProfile(session.user);
@@ -817,9 +817,10 @@
     }
     updateSync();
     hideSplash();
-    // 后台对账（非阻塞）：补拉云端 settings（带重试），与当前缓存权限不同则自动重算并刷新。
-    // 即便首次启动无本地缓存，也能在数秒内从云端拿到真实权限自动修正，无需用户等待首屏。
-    ensureSettingsLoaded().then(() => {
+    // 后台对账（非阻塞）：用稳健方式再补拉一次云端 settings（已认证会话就绪 + 重试），
+    // 与当前权限不同则无感重算并刷新。即便是首次启动无本地缓存，也能在登录流程内
+    // 由 loadSettingsRobust 直接拿到真实权限，此处作为边缘兜底（如服务端权限被改）。
+    DB.loadSettingsRobust().then(() => {
       try {
         const before = JSON.stringify((state._settings && state._settings.permissions) || null);
         const after = JSON.stringify((DB.getSettings() && DB.getSettings().permissions) || null);
