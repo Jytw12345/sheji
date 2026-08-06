@@ -752,7 +752,14 @@
     // 页面刚打开时 loadAll 以匿名身份执行，RLS 下拉到的是空数据，
     // 若直接用旧缓存匹配档案会误判「无档案」而弹出绑定页（导致重复建档案）。
     try { await DB.reload(); await DB.loadSettingsRobust(); await loadData(); } catch (e) { console.warn('登录后重载数据失败', e); }
-    const me = (state._designers || []).find(d => d.auth_id && d.auth_id === session.user.id);
+    let me = (state._designers || []).find(d => d.auth_id && d.auth_id === session.user.id);
+    // 首登时序竞态：新建会话 JWT 偶发未对 RLS 生效，designers 查询返回空 → 误判「无档案」而弹出
+    // 绑定页（表现为「获取不到职位」）；刷新后会话稳定才正常。此处健壮重试一次，确认确无档案才弹绑定页，
+    // 避免误弹 / 重复建档。
+    if (!me) {
+      try { await DB.loadDesignersRobust(); await loadData(); } catch (e) { console.warn('重试拉取设计师失败', e); }
+      me = (state._designers || []).find(d => d.auth_id && d.auth_id === session.user.id);
+    }
     if (me) { state.currentUser = me; await afterLogin(); return; }
     renderBindProfile(session.user);
   }

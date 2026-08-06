@@ -281,6 +281,35 @@ window.DB = (function () {
     }
     return settings;
   }
+  // 登录后稳健加载设计师档案：根除「首次登录匹配不到档案 → 误弹绑定页 / 获取不到职位」的时序竞态。
+  // 与 loadSettingsRobust 同源：signInWithPassword 刚成功时新建会话的 JWT 偶发尚未被 PostgREST 识别，
+  // designers 表的 RLS 查询返回空 → afterAuthLogin 用 auth_id 找不到本人档案（me 为 undefined）→
+  // 弹出「补全设计师档案」页（要求重新选职位）。刷新时会话已稳定，查询成功才正常进入。
+  // 本函数：先确认已认证会话就绪，再多次重试拉取 designers，拿到非空结果即返回；确为空才留给上层判「无档案」。
+  async function loadDesignersRobust() {
+    // 1) 确认已认证会话就绪（最多约 1.5s）
+    for (let i = 0; i < 6; i++) {
+      try {
+        const { data } = await sb.auth.getSession();
+        if (data && data.session && data.session.user) break;
+      } catch (e) {}
+      if (i < 5) await new Promise(r => setTimeout(r, 250));
+    }
+    // 2) 重试拉取 designers，拿到非空即返回（上限约 1.6s）
+    for (let i = 0; i < 4; i++) {
+      try {
+        const { data, error } = await sb.from('designers').select('*');
+        if (!error && data) {
+          cache.designers = mergeServer('designers', data);
+          if (cache.designers.length) return cache.designers;   // 拿到档案，立即返回
+        } else if (error) {
+          console.warn('[designers] 拉取失败(' + (i + 1) + ')：', error.message);
+        }
+      } catch (e) { console.warn('[designers] 拉取异常(' + (i + 1) + ')', e); }
+      if (i < 3) await new Promise(r => setTimeout(r, 400));
+    }
+    return cache.designers;
+  }
 
   /* ---------------- 通用 CRUD ---------------- */
   async function list(table) { return cache[table].slice(); }
@@ -630,7 +659,7 @@ window.DB = (function () {
 
   return {
     init, subscribe, getLastSync, getMode, markSynced, reload: loadAll,
-    getSettings, saveSettings, reloadSettings, loadSettingsRobust, probeSupabaseSchema,
+    getSettings, saveSettings, reloadSettings, loadSettingsRobust, loadDesignersRobust, probeSupabaseSchema,
     listDesigners, saveDesigner, deleteDesigner,
     listGroups, saveGroup, deleteGroup,
     listCustomers, saveCustomer, saveCustomerContacts, deleteCustomer, cascadeCustomerName,
