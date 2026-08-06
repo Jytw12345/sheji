@@ -5,21 +5,34 @@
  *  - 跨域 CDN（Supabase / Chart.js / xlsx）：stale-while-revalidate
  * 注意：所有预缓存路径使用相对路径，自动适配 GitHub Pages 子路径部署。
  */
-const CACHE = 'dw-pwa-v265';
+const CACHE = 'dw-pwa-v271';
+
+/* 版本参数说明（两套，互相独立）
+ *  APPV —— 自研代码（js/*.js、css/styles.css）。每次改前端代码发版都要 +1，
+ *          必须与 index.html 里的 ?vNNN 保持一致。
+ *  LIBV —— 第三方库（vendor/*.js，约 1.3MB）。这些文件平时不动，
+ *          只有真的替换/升级库文件时才 +1。URL 不变 → 浏览器与 SW 都直接复用
+ *          已有副本，发版时零重复下载。
+ * PRECACHE 里的 URL 必须与 index.html 中的请求 URL 逐字一致，
+ * 否则同一个文件会被下载两次（一次 SW 预缓存、一次页面请求），且缓存 key 对不上。
+ */
+const APPV = 'v271';
+const LIBV = 'lib1';
+
 const PRECACHE = [
-  './',
+  './',                                  // 导航入口不带参数（用户地址栏访问的就是它）
   './index.html',
   './manifest.webmanifest',
-  './css/styles.css',
-  './vendor/supabase.js',
-  './vendor/chart.js',
-  './vendor/xlsx.js',
-  './js/config.js',
-  './js/db.js',
-  './js/calc.js',
-  './js/charts.js',
-  './js/export.js',
-  './js/app.js',
+  './css/styles.css?' + APPV,
+  './vendor/supabase.js?' + LIBV,
+  './vendor/chart.js?' + LIBV,
+  './vendor/xlsx.js?' + LIBV,
+  './js/config.js?' + APPV,
+  './js/db.js?' + APPV,
+  './js/calc.js?' + APPV,
+  './js/charts.js?' + APPV,
+  './js/export.js?' + APPV,
+  './js/app.js?' + APPV,
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];
@@ -29,9 +42,19 @@ self.addEventListener('install', (event) => {
   // 必须由页面在用户点击「立即更新」时通过 postMessage({type:'SKIP_WAITING'}) 来唤醒，
   // 否则新版 SW 会自行跳过 waiting 直接激活并 clients.claim() 接管页面，
   // 导致「发现新版本」提示来不及出现 —— 表现成静默直接更新。
+  // 预缓存必须绕过浏览器 HTTP 缓存：GitHub Pages 对静态资源下发 Cache-Control: max-age=600，
+  // 直接 c.addAll(PRECACHE) 会命中 10 分钟内的磁盘缓存，把「旧文件」写进新版本 CACHE，
+  // 导致离线时拿到的是上一版代码。用 Request(url, {cache:'reload'}) 强制回源。
+  // vendor 例外：它带独立的 LIBV，URL 不变即内容不变，用 'default' 允许命中浏览器
+  // 磁盘缓存，避免每次发版白白重下 1.3MB 的第三方库。
   event.waitUntil(
-    caches.open(CACHE)
-      .then((c) => c.addAll(PRECACHE))
+    caches.open(CACHE).then((c) => Promise.all(
+      PRECACHE.map((u) =>
+        fetch(new Request(u, { cache: u.indexOf('/vendor/') >= 0 ? 'default' : 'reload' }))
+          .then((res) => (res && res.ok ? c.put(u, res) : null))
+          .catch(() => null)   // 单个资源失败不阻断整体安装（原 addAll 是全或无）
+      )
+    ))
   );
 });
 
@@ -74,17 +97,37 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => { cachePut(req, res.clone()); return res; })
-        .catch(() => caches.match(req).then((m) => m || caches.match('./index.html')))
+        .catch(() => caches.match(req, { ignoreSearch: true })
+          .then((m) => m || caches.match('./index.html')))
     );
     return;
   }
 
-  // 同源静态：network-first（开发期每次取最新，离线回退缓存）
+  // vendor 第三方库：cache-first。这些文件带独立的 LIBV 版本参数，
+  // URL 一旦命中缓存就说明内容没变，直接返回本地副本 —— 首屏不必再等 3 个共 1.3MB 的
+  // 网络请求。升级库时把 LIBV +1，URL 变化自然 miss 缓存并回源，不会拿到旧库。
+  if (url.origin === self.location.origin && url.pathname.indexOf('/vendor/') >= 0) {
+    event.respondWith(
+      caches.match(req).then((m) => m || fetch(req)
+        .then((res) => { cachePut(req, res.clone()); return res; })
+        .catch(() => caches.match(req, { ignoreSearch: true })
+          .then((f) => f || Response.error())))
+    );
+    return;
+  }
+
+  // 同源静态：network-first（每次取最新，离线回退缓存）。
+  // 这是「漏 bump APPV」的安全网：即便版本参数忘了改，联网时用户照样能拿到最新代码。
+  // 离线回退用 ignoreSearch:true —— PRECACHE 现已带上与页面一致的 ?APPV，正常能精确命中；
+  // 但历史缓存或临时加的查询串（如探测用的 ?t=时间戳）仍可能不一致，忽略查询串更稳。
+  // 另外静态资源 miss 时绝不能回退 index.html：把 HTML 当 JS/CSS 返回会直接让页面崩掉，
+  // 宁可抛网络错误让浏览器如实报错。
   if (url.origin === self.location.origin) {
     event.respondWith(
       fetch(req)
         .then((res) => { cachePut(req, res.clone()); return res; })
-        .catch(() => caches.match(req).then((m) => m || caches.match('./index.html')))
+        .catch(() => caches.match(req, { ignoreSearch: true })
+          .then((m) => m || Response.error()))
     );
     return;
   }

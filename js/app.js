@@ -980,27 +980,55 @@
       eye.classList.toggle('on', show);
       pw.focus();
     });
-    // 点击邮箱输入框时清除掩码，允许手动输入
+    // 兼容旧版遗留的掩码值：聚焦时若仍是掩码则清空，允许手动输入
     const emInput = $('#loginEmail');
     if (emInput) emInput.addEventListener('focus', () => {
       if ((emInput.value || '').includes('已选择')) { emInput.value = ''; _quickLoginEmail = ''; }
+    });
+    // 手动改邮箱 = 放弃快捷选择：取消高亮并清空密码，避免残留上一个人的密码被提交。
+    // 注意只在「已有快捷选择态」时才介入：页面加载时浏览器自动填充邮箱同样会触发 input，
+    // 此时若清空密码，会把浏览器刚填好的密码一起抹掉。
+    if (emInput) emInput.addEventListener('input', () => {
+      if (!_quickLoginEmail) return;                    // 无选择态：交给浏览器自动填充，不干预
+      if (emInput.value === _quickLoginEmail) return;   // 值没变（同一账号），不算切换
+      _quickLoginEmail = '';
       $$('.login-quick .login-user').forEach(x => x.classList.remove('is-selected'));
       const hint = $('#quickLoginHint'); if (hint) hint.style.display = 'none';
+      clearLoginPw();
     });
+    // 清空密码框并复位「显示密码」眼睛状态（切换登录账号时必须调用）
+    function clearLoginPw() {
+      const p = $('#loginPw');
+      if (!p) return;
+      p.value = '';
+      p.type = 'password';
+      const e2 = $('#loginPwEye');
+      if (e2) { e2.textContent = '👁'; e2.classList.remove('on'); }
+    }
     // 密码重置改为「管理员代设」：登录页不再提供自助重置入口，引导联系管理员
     const loginFoot = $('.login-foot');
     if (loginFoot) loginFoot.title = '如忘记密码，请联系管理员在「设置 → 设计师管理」中代设新密码';
-    // 快捷登录：点击名字后内部记录邮箱（不显示在页面上），提示输密码
+    // 快捷登录：点击名字后填入该账号的真实邮箱。
+    // 必须写真实邮箱（不能用「●●● 已选择」掩码）：浏览器密码管理器按「域名 + 用户名」保存凭据，
+    // 用户名恒为同一串掩码时，A/B 两人的密码会被当成同一条凭据 —— 点 B 却自动填出 A 的密码。
+    // 同时切换账号必须清空密码框，否则上一个人已填入的密码会残留并被提交，导致登录失败。
     let _quickLoginEmail = '';
     $$('.login-quick .login-user').forEach(b => b.addEventListener('click', () => {
       const did = b.dataset.did;
       const d = (state._designers || []).find(x => x.id === did);
       if (d && d.email) {
+        const switching = _quickLoginEmail && _quickLoginEmail !== d.email;
         _quickLoginEmail = d.email;
-        $('#loginEmail').value = '●●●●●● 已选择「' + esc(d.name) + '」';
+        $('#loginEmail').value = d.email;
+        clearLoginPw();                       // 关键修复：切人即清空，杜绝串号密码
         $('#loginPw').focus();
         const hint = $('#quickLoginHint');
-        if (hint) { hint.style.display = ''; hint.textContent = '已选择 ' + esc(d.name) + '，请输入密码后点登录'; }
+        if (hint) {
+          hint.style.display = '';
+          hint.textContent = switching
+            ? '已切换到 ' + d.name + '，密码已清空，请输入 ' + d.name + ' 的密码'
+            : '已选择 ' + d.name + '，请输入密码后点登录';
+        }
         // 高亮选中按钮
         $$('.login-quick .login-user').forEach(x => x.classList.remove('is-selected'));
         b.classList.add('is-selected');
@@ -1084,12 +1112,14 @@
   }
   async function ensureChartLib() {
     if (typeof window.Chart !== 'undefined') return true;
-    try { await loadScriptOnce('vendor/chart.js?v=129'); } catch (e) { console.warn(e); }
+    // 版本参数必须与 index.html / sw.js PRECACHE 中的 LIBV 逐字一致（当前 ?lib1）。
+    // 不一致会变成另一个 URL：既命不中 SW 预缓存（离线时加载失败），又会重复下载一份。
+    try { await loadScriptOnce('vendor/chart.js?lib1'); } catch (e) { console.warn(e); }
     return typeof window.Chart !== 'undefined';
   }
   async function ensureXlsxLib() {
     if (typeof window.XLSX !== 'undefined') return true;
-    try { await loadScriptOnce('vendor/xlsx.js?v=129'); } catch (e) { console.warn(e); }
+    try { await loadScriptOnce('vendor/xlsx.js?lib1'); } catch (e) { console.warn(e); }
     return typeof window.XLSX !== 'undefined';
   }
 

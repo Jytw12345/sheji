@@ -8,13 +8,13 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v248" />
-  <link rel="preload" href="vendor/supabase.js?v=129" as="script" />
-  <link rel="preload" href="vendor/chart.js?v=129" as="script" />
+  <link rel="stylesheet" href="css/styles.css?v271" />
+  <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
+  <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
        xlsx(861k) 体积大且非首屏，改为导出时按需动态加载（见 js/app.js ensureXlsxLib） -->
-  <script defer src="vendor/supabase.js?v=129"></script>
-  <script defer src="vendor/chart.js?v=129"></script>
+  <script defer src="vendor/supabase.js?lib1"></script>
+  <script defer src="vendor/chart.js?lib1"></script>
 </head>
 <body>
   <!-- 启动 Splash：随 HTML 解析立即出现，不依赖任何 JS / CDN，用于消除白屏、实现无感加载 -->
@@ -419,12 +419,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v260"></script>
-  <script defer src="js/db.js?v260"></script>
-  <script defer src="js/calc.js?v260"></script>
-  <script defer src="js/charts.js?v260"></script>
-  <script defer src="js/export.js?v260"></script>
-  <script defer src="js/app.js?v260"></script>
+  <script defer src="js/config.js?v271"></script>
+  <script defer src="js/db.js?v271"></script>
+  <script defer src="js/calc.js?v271"></script>
+  <script defer src="js/charts.js?v271"></script>
+  <script defer src="js/export.js?v271"></script>
+  <script defer src="js/app.js?v271"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）
@@ -456,11 +456,25 @@
       const notify = () => {
         if (forceUpdate && !hasOpenModal()) {
           if (reg.waiting) { try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (e) {} }
-          window.__swPendingUpdate();
+          if (window.__swPendingUpdate) window.__swPendingUpdate();
         } else if (window.showAppUpdate) {
           window.showAppUpdate();
         }
       };
+      // 周期性检查更新：浏览器只在页面加载注册 SW 时自动查一次。
+      // PWA 独立窗口/手机端常常长时间挂着不重启，仅靠那一次检查会完全收不到新版本
+      //（表现为「我发版了，用户却一直是旧版」）。这里补上定时 + 回到前台时检查，
+      // 并做 60s 节流，避免频繁切窗时反复请求 sw.js。
+      let lastCheck = 0;
+      const checkUpdate = () => {
+        const now = Date.now();
+        if (now - lastCheck < 60000) return;
+        lastCheck = now;
+        try { reg.update(); } catch (e) {}
+      };
+      setInterval(checkUpdate, 5 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+      window.addEventListener('focus', checkUpdate);
           // 检测到新版本（安装完成且页面已被旧 SW 控制 → 说明是更新而非首装）
           reg.addEventListener('updatefound', () => {
             const nw = reg.installing;
