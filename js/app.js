@@ -20,6 +20,7 @@
     _overdueOnly: false,   // 订单列表：仅显示截稿逾期
     _dueTodayOnly: false,  // 订单列表：仅显示今日截稿
     autoHideFinalized: true,   // 工作台：定稿满1天自动隐藏已完成卡片
+    wbView: 'personal',        // 工作台视图：personal（个人）/ team（团队看板）
     dashboardPeriod: 'current', // 仪表盘考核窗口：current / previous
     anaMode: 'current',         // 经营分析统计方式：current / previous / custom
     _riskMap: null,             // 逾期风险缓存（数据刷新后失效）
@@ -1935,6 +1936,14 @@
     });
     // 工作台
     $('#wDesigner').addEventListener('change', () => { state.currentDesignerId = $('#wDesigner').value; renderWorkbench(); });
+    // 工作台视图切换：个人视图 / 团队看板
+    const wbVT = $('#wbViewToggle');
+    if (wbVT) wbVT.addEventListener('click', e => {
+      const b = e.target.closest('[data-view]'); if (!b) return;
+      state.wbView = b.dataset.view;
+      $$('#wbViewToggle .wb-view-btn').forEach(x => x.classList.toggle('active', x === b));
+      renderWorkbench();
+    });
     // 工作台筛选
     ['wbStatus', 'wbPeriod'].forEach(id => {
       const el = $('#' + id);
@@ -3652,7 +3661,9 @@
    * 工作台（个人订单卡片视图）
    * ============================================================ */
   function renderWorkbench() {
+    if ((state.wbView || 'personal') === 'team') { renderTeamBoard(); return; }
     const sec = $('#tab-designers');
+    if (sec) sec.classList.remove('team');
     const ds = state._designers || [];
     if (!ds.length) {
       fill('#wDesigner', []);
@@ -3803,11 +3814,71 @@
       return;
     }
     $('#workbenchCards').innerHTML = archiveHint + cardOrders.map(o => workbenchCard(o, d)).join('');
+    bindWorkbenchCards();
+    bindShowArchived();
+    applyPermissions();
+    updateSwipeDiag();
+  }
+
+  // 团队看板横向滚动提示：滚动到尽头后隐藏提示
+  function bindTeamBoardScroll() {
+    const board = $('#teamBoard');
+    const hint = $('#teamScrollHint');
+    if (!board || !hint) return;
+    const check = () => {
+      const hasOverflow = board.scrollWidth > board.clientWidth;
+      const atEnd = board.scrollLeft + board.clientWidth >= board.scrollWidth - 2;
+      hint.classList.toggle('hide', !hasOverflow || atEnd);
+    };
+    board.addEventListener('scroll', check, { passive: true });
+    window.addEventListener('resize', check, { passive: true });
+    check();
+  }
+
+  // 工作台卡片事件绑定（个人视图与团队看板共用）：流程推进、打开详情、打开/复制文件夹
+  function bindWorkbenchCards() {
     $$('#workbenchCards [data-wb-act]').forEach(b => b.addEventListener('click', () => wbAdvance(b.dataset.wbId, b.dataset.wbAct)));
     $$('#workbenchCards [data-open]').forEach(b => b.addEventListener('click', () => openOrder(b.dataset.open)));
     $$('#workbenchCards [data-openfolder]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openInExplorer(b.dataset.openfolder); }));
     $$('#workbenchCards [data-fpcopy]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); copyText(b.dataset.fpcopy); toast('已复制路径'); }));
-    bindShowArchived();
+  }
+
+  // 「我的工作台 → 团队看板」：所有设计师各占一列（管理员/店长看全团队，普通设计师仅看自己那一列），
+  // 列内为该设计师当前进行中的任务卡，使用简化卡片以便一屏浏览更多列。
+  function renderTeamBoard() {
+    const sec = $('#tab-designers');
+    if (sec) sec.classList.add('team');
+    const ds = state._designers || [];
+    const viewAll = isViewAll();
+    let list = ds.filter(d => isActiveDesign(d));
+    if (!viewAll) {
+      list = ds.filter(d => state.currentUser && d.id === state.currentUser.id && isActiveDesign(d));
+      if (!list.length && state.currentUser) list = [state.currentUser];
+    }
+    if (!list.length) {
+      $('#workbenchStats').innerHTML = '';
+      $('#workbenchKpis').innerHTML = '';
+      $('#workbenchCards').innerHTML = '<div class="empty">暂无设计师</div>';
+      return;
+    }
+    const ACTIVE = ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案', '提案不通过'];
+    let html = '<div class="team-scroll-hint" id="teamScrollHint">← 左右滑动 / 滚动查看更多设计师 →</div><div class="team-board" id="teamBoard">';
+    list.forEach(d => {
+      const orders = (state._orders || []).filter(o => window.Cfg.participants(o).includes(d.id) && ACTIVE.includes(o.status));
+      orders.sort((a, b) => (b.intake_at || '').localeCompare(a.intake_at || ''));
+      const cards = orders.length
+        ? orders.map(o => teamBoardCard(o, d)).join('')
+        : '<div class="team-empty">暂无进行中任务</div>';
+      html += '<div class="team-col"><div class="team-col-head"><span class="team-col-name">' + esc(d.name) + '</span>' +
+        '<span class="team-col-count">' + orders.length + ' 进行中</span></div>' +
+        '<div class="team-col-body">' + cards + '</div></div>';
+    });
+    html += '</div>';
+    $('#workbenchStats').innerHTML = '';
+    $('#workbenchKpis').innerHTML = '';
+    $('#workbenchCards').innerHTML = html;
+    bindTeamBoardScroll();
+    bindWorkbenchCards();
     applyPermissions();
     updateSwipeDiag();
   }
@@ -3941,6 +4012,36 @@
           <span class="wb-deadline">截稿：${fmtDeadline(o.deadline) || '未设置'}</span>
           <div class="wb-actions">${cardFlowButtons(o)}<button class="btn sm secondary" data-open="${o.id}">详情</button></div>
         </div>
+      </div>`;
+  }
+
+  // 团队看板专用简化卡片：只保留最关键信息，整卡可点打开详情
+  function teamBoardCard(o, designer) {
+    const dsMap = Object.fromEntries((state._designers || []).map(d => [d.id, d.name]));
+    const isMeMain = o.assigned_designer_id === designer.id;
+    const roleTag = isMeMain ? '<span class="card-role main">负责人</span>' : '<span class="card-role collab">协作</span>';
+    const FLOW = window.Cfg.FLOW;
+    const curIdx = FLOW.indexOf(o.status);
+    const totalSteps = FLOW.length;
+    let progress = 0;
+    if (o.status === '已定稿') progress = 100;
+    else if (o.status === '已换人') progress = 100;
+    else if (curIdx >= 0) progress = Math.max(0, Math.min(100, Math.round((curIdx / (totalSteps - 1)) * 100)));
+    const dl = deadlineInfo(o);
+    const color = ringColor(o, progress, dl);
+    const statusCfg = window.Cfg.STATUS[o.status] || {};
+    const statusPill = '<span class="pill" style="background:' + (statusCfg.color || '#64748b') + '">' + esc(statusCfg.label || o.status) + '</span>';
+    const sameAsTitle = (o.customer_name || '').trim() === (o.title || '').trim();
+    const clientPart = sameAsTitle ? '' : esc(o.customer_name || '—') + ' · ';
+    return `
+      <div class="team-card ${dl.cardClass}" data-open="${o.id}" title="点击查看详情">
+        <div class="team-card-head">
+          <div class="team-title">${esc(o.title)} ${roleTag}</div>
+          <div class="team-meta"><span>${esc(o.order_no || '')}</span>${statusPill}</div>
+        </div>
+        <div class="team-progress"><div class="team-progress-bar" style="width:${progress}%;background:${color}"></div><span>${progress}%</span></div>
+        <div class="team-client">${clientPart}${esc(o.task_type)}</div>
+        ${dl.badge ? '<div class="team-dl">' + dl.badge + '</div>' : ''}
       </div>`;
   }
 

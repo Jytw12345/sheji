@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v282" />
+  <link rel="stylesheet" href="css/styles.css?v292" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -156,7 +156,16 @@
     <!-- ============ 工作台 ============ -->
     <section id="tab-designers">
       <div class="page-head">
-        <div><h2>我的工作台</h2><div class="sub">选择设计师，查看本人订单任务、进度与时间节点</div></div>
+        <div class="page-head-left">
+          <div class="wb-title-row">
+            <h2>我的工作台</h2>
+            <div class="wb-view-toggle" id="wbViewToggle">
+              <button type="button" class="wb-view-btn active" data-view="personal">个人视图</button>
+              <button type="button" class="wb-view-btn" data-view="team">团队看板</button>
+            </div>
+          </div>
+          <div class="sub">选择设计师，查看本人订单任务、进度与时间节点</div>
+        </div>
         <div class="wb-filters">
           <div class="field"><label>当前设计师</label><select id="wDesigner"></select></div>
           <div class="field"><label>状态</label>
@@ -453,12 +462,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v282"></script>
-  <script defer src="js/db.js?v282"></script>
-  <script defer src="js/calc.js?v282"></script>
-  <script defer src="js/charts.js?v282"></script>
-  <script defer src="js/export.js?v282"></script>
-  <script defer src="js/app.js?v282"></script>
+  <script defer src="js/config.js?v292"></script>
+  <script defer src="js/db.js?v292"></script>
+  <script defer src="js/calc.js?v292"></script>
+  <script defer src="js/charts.js?v292"></script>
+  <script defer src="js/export.js?v292"></script>
+  <script defer src="js/app.js?v292"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）
