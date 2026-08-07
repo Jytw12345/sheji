@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v274" />
+  <link rel="stylesheet" href="css/styles.css?v275" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -367,6 +367,12 @@
         <p class="sub" style="color:var(--muted)">导出全部业务数据为 JSON 备份。正式使用期间不再提供「载入示例数据、清空数据、本地推送云端」等演示/高危操作。</p>
         <button class="btn secondary" id="btnExportAll">导出全部(JSON)</button>
       </div>
+      <div class="card" id="settingsRecycle" style="display:none">
+        <h3>回收站 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员/店长）</span></h3>
+        <p class="sub" style="color:var(--muted);margin:8px 0 12px">订单/客户删除后进入回收站，可在此还原或彻底删除。彻底删除不可恢复。</p>
+        <div id="recycleBinList" class="table-scroll"></div>
+      </div>
+
       <div class="card" data-perm="manage_permissions">
         <h3>权限配置 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员）</span></h3>
         <p class="sub" style="color:var(--muted);margin-bottom:10px">为「管理员 / 店长 / 设计师」三个职务设置各菜单与按钮的默认显隐，并可对单个设计师做个性化覆盖。修改即时生效。</p>
@@ -431,12 +437,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v274"></script>
-  <script defer src="js/db.js?v274"></script>
-  <script defer src="js/calc.js?v274"></script>
-  <script defer src="js/charts.js?v274"></script>
-  <script defer src="js/export.js?v274"></script>
-  <script defer src="js/app.js?v274"></script>
+  <script defer src="js/config.js?v275"></script>
+  <script defer src="js/db.js?v275"></script>
+  <script defer src="js/calc.js?v275"></script>
+  <script defer src="js/charts.js?v275"></script>
+  <script defer src="js/export.js?v275"></script>
+  <script defer src="js/app.js?v275"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）

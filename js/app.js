@@ -3612,9 +3612,9 @@
     if (!can('orders_delete')) { toast('无删除订单权限'); return; }
     const o = (state._orders || []).find(x => x.id === id);
     const label = o && o.order_no ? '「' + o.order_no + '」' : '';
-    if (!(await uiConfirm('确认删除该订单' + label + '？此操作不可撤销。'))) return;
+    if (!(await uiConfirm('确认将该订单' + label + '移入回收站？可在「设置 → 回收站」中还原。'))) return;
     try { await DB.deleteOrder(id); logOp('删除订单', '订单', id); closeModal(); await refreshAll(); }
-    catch (e) { toast('删除失败：' + e.message); }
+    catch (e) { toast('移入回收站失败：' + e.message); }
   }
 
   /* ============================================================
@@ -4377,7 +4377,7 @@
     if (!lockOp('delCustomer:' + cid)) return;
     try {
       const cn = (state._customers || []).find(x => x.id === cid);
-      if (!(await uiConfirm('确认删除客户' + (cn ? '「' + cn.name + '」' : '') + '？此操作不可撤销。'))) return;
+      if (!(await uiConfirm('确认将客户' + (cn ? '「' + cn.name + '」' : '') + '移入回收站？可在「设置 → 回收站」中还原。'))) return;
       await DB.deleteCustomer(cid); logOp('删除客户', '客户', cid, cn ? cn.name : '');
       toast('已删除'); state.customerPage = 1; await refreshAll();
     } finally { unlockOp('delCustomer:' + cid); }
@@ -4583,9 +4583,54 @@
     renderPermConfig();
     fillLogDesigners();
     if (can('view_logs')) { try { await renderOpLogs(); } catch (e) { console.warn('初始加载操作日志失败', e); } }
+    renderRecycleBin();   // 不 await：回收站需查询已删记录
     renderAbout();   // 不 await：读版本要发一次网络请求，不该拖慢设置页渲染
     applyPermissions();
   }
+  // 「设置 → 回收站」：列出已软删除的订单/客户，可还原或彻底删除。
+  // 入口仅对具备 orders_delete / customers_delete 权限的人可见（管理员/店长）。
+  let _recycleBound = false;
+  async function renderRecycleBin() {
+    const card = $('#settingsRecycle');
+    if (!card) return;
+    if (!can('orders_delete') && !can('customers_delete')) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const box = $('#recycleBinList');
+    if (!box) return;
+    box.innerHTML = '<div class="empty">加载中…</div>';
+    try {
+      const [ods, cs] = await Promise.all([DB.listDeleted('orders'), DB.listDeleted('customers')]);
+      const rows = [];
+      (ods || []).forEach(o => rows.push({ type: '订单', table: 'orders', id: o.id, title: (o.order_no || '') + ' ' + (o.title || ''), deleted_at: o.deleted_at }));
+      (cs || []).forEach(c => rows.push({ type: '客户', table: 'customers', id: c.id, title: c.name || '', deleted_at: c.deleted_at }));
+      if (!rows.length) { box.innerHTML = '<div class="empty">回收站为空</div>'; return; }
+      box.innerHTML = '<table class="tbl"><thead><tr><th>类型</th><th>名称</th><th>删除时间</th><th>操作</th></tr></thead><tbody>' +
+        rows.map(r => '<tr><td>' + r.type + '</td><td>' + esc(r.title) + '</td><td>' + (r.deleted_at ? fmtTime(r.deleted_at) : '—') + '</td><td>' +
+          (can(r.table === 'orders' ? 'orders_delete' : 'customers_delete') ?
+            '<button class="btn sm" data-restore="' + r.table + '|' + r.id + '">还原</button>' : '') +
+          (can('orders_delete') ?
+            ' <button class="btn sm danger" data-purge="' + r.table + '|' + r.id + '">彻底删除</button>' : '') +
+          '</td></tr>').join('') + '</tbody></table>';
+      if (!_recycleBound) {
+        box.addEventListener('click', async e => {
+          const rb = e.target.closest('[data-restore]');
+          const pb = e.target.closest('[data-purge]');
+          if (rb) {
+            const [t, id] = rb.dataset.restore.split('|');
+            try { await DB.restoreDeleted(t, id); logOp('还原记录', t === 'orders' ? '订单' : '客户', id); toast('已还原'); renderRecycleBin(); await refreshAll(); }
+            catch (err) { toast('还原失败：' + err.message); }
+          } else if (pb) {
+            const [t, id] = pb.dataset.purge.split('|');
+            if (!(await uiConfirm('彻底删除后将无法恢复，确认？'))) return;
+            try { await DB.purgeDeleted(t, id); logOp('彻底删除', t === 'orders' ? '订单' : '客户', id); toast('已彻底删除'); renderRecycleBin(); await refreshAll(); }
+            catch (err) { toast('彻底删除失败：' + err.message); }
+          }
+        });
+        _recycleBound = true;
+      }
+    } catch (e) { box.innerHTML = '<div class="empty">加载回收站失败：' + esc(e.message) + '</div>'; }
+  }
+
   // 「设置 → 关于」：显示当前运行的资源版本 + 手动检查更新。
   // 原先是右下角对所有人常驻的浮层，移到设置页后受 menu_settings 权限保护（默认仅管理员）。
   let _aboutBound = false;

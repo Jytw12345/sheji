@@ -133,8 +133,9 @@ window.DB = (function () {
     }
     const designers = await safe('designers', () => sb.from('designers').select('*'));
     const groups = await safe('groups', () => sb.from('groups').select('*'));
-    const customers = await safe('customers', () => sb.from('customers').select('*'));
-    const orders = await safe('orders', () => sb.from('orders').select('*'));
+    // 软删除：拉取时过滤掉已移入回收站（deleted_at 非空）的记录，已删数据不出现在主列表
+    const customers = await safe('customers', () => sb.from('customers').select('*').is('deleted_at', null));
+    const orders = await safe('orders', () => sb.from('orders').select('*').is('deleted_at', null));
     const st = await safe('settings', () => sb.from('settings').select('*').eq('id', 1).maybeSingle());
     cache.designers = mergeServer('designers', designers && designers.data);
     cache.groups = mergeServer('groups', groups && groups.data);
@@ -347,6 +348,16 @@ window.DB = (function () {
   }
 
   async function remove(table, id) {
+    // orders / customers 走软删除（移入回收站，可由管理员/店长还原）；其余表保持物理删除。
+    // 软删除经由 DB 层 RPC（soft_delete_record）校验角色，避免退回「任何登录用户可改」的漏洞。
+    if (table === 'orders' || table === 'customers') {
+      const { error } = await sb.rpc('soft_delete_record', { p_table: table, p_id: id });
+      if (error) throw error;
+      cache[table] = cache[table].filter(x => x.id !== id);
+      scheduleReconcile(table);
+      emit();
+      return;
+    }
     const { error } = await sb.from(table).delete().eq('id', id);
     if (error) throw error;
     pendingDeleteIds.add(id);
@@ -368,7 +379,9 @@ window.DB = (function () {
   }
   async function reconcile(table) {
     try {
-      const res = await sb.from(table).select('*');
+      let q = sb.from(table).select('*');
+      if (table === 'orders' || table === 'customers') q = q.is('deleted_at', null);
+      const res = await q;
       cache[table] = mergeServer(table, res.data);
       emit();
     } catch (e) { console.warn('后台对账失败（不影响本端显示）', e); }
@@ -465,6 +478,32 @@ window.DB = (function () {
     return save('orders', o);
   }
   async function deleteOrder(id) { return remove('orders', id); }
+
+  // ---------- 回收站（软删除）相关 ----------
+  // 还原：清空 deleted_at，并把该记录重新并入主列表缓存
+  async function restoreDeleted(table, id) {
+    const { error } = await sb.rpc('restore_record', { p_table: table, p_id: id });
+    if (error) throw error;
+    const { data } = await sb.from(table).select('*').eq('id', id).maybeSingle();
+    if (data) upsertCache(table, data);
+    scheduleReconcile(table);
+    emit();
+  }
+  // 彻底删除：物理删除（仅管理员，由 RPC 校验）
+  async function purgeDeleted(table, id) {
+    const { error } = await sb.rpc('purge_record', { p_table: table, p_id: id });
+    if (error) throw error;
+    pendingDeleteIds.add(id);
+    cache[table] = cache[table].filter(x => x.id !== id);
+    scheduleReconcile(table);
+    emit();
+  }
+  // 列出已软删除（回收站）的记录，按删除时间倒序
+  async function listDeleted(table) {
+    const { data, error } = await sb.from(table).select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  }
 
   /* ---------------- 操作日志 ---------------- */
   // 旁路写入：不阻塞主流程，写入失败只告警不抛错
@@ -663,7 +702,7 @@ window.DB = (function () {
     listDesigners, saveDesigner, deleteDesigner,
     listGroups, saveGroup, deleteGroup,
     listCustomers, saveCustomer, saveCustomerContacts, deleteCustomer, cascadeCustomerName,
-    listOrders, saveOrder, deleteOrder, genOrderNo, reconnectSupabase,
+    listOrders, saveOrder, deleteOrder, restoreDeleted, purgeDeleted, listDeleted, genOrderNo, reconnectSupabase,
     logOperation, queryLogs,
     auth
   };
