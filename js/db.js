@@ -61,7 +61,7 @@ window.DB = (function () {
     try {
       await new Promise((res, rej) => {
         const s = document.createElement('script');
-        s.src = 'vendor/supabase.js?v=129'; s.async = true;
+        s.src = 'vendor/supabase.js?lib1'; s.async = true;
         s.onload = () => res(); s.onerror = () => rej(new Error('load fail vendor/supabase.js'));
         document.head.appendChild(s);
       });
@@ -131,12 +131,16 @@ window.DB = (function () {
       try { return await fn(); }
       catch (e) { console.warn('[' + table + '] 加载失败，已隔离：', e && e.message); return null; }
     }
-    const designers = await safe('designers', () => sb.from('designers').select('*'));
-    const groups = await safe('groups', () => sb.from('groups').select('*').is('deleted_at', null));
-    // 软删除：拉取时过滤掉已移入回收站（deleted_at 非空）的记录，已删数据不出现在主列表
-    const customers = await safe('customers', () => sb.from('customers').select('*').is('deleted_at', null));
-    const orders = await safe('orders', () => sb.from('orders').select('*').is('deleted_at', null));
-    const st = await safe('settings', () => sb.from('settings').select('*').eq('id', 1).maybeSingle());
+    // 并行拉取 5 张表：跨区（东京）RTT 明显，顺序 await 会累积成 0.7~1.5s 的首屏延迟。
+    // 各表仍用 safe() 单独兜底，单表失败只返回 null 不影响其余表。
+    const [designers, groups, customers, orders, st] = await Promise.all([
+      safe('designers', () => sb.from('designers').select('*')),
+      safe('groups', () => sb.from('groups').select('*').is('deleted_at', null)),
+      // 软删除：拉取时过滤掉已移入回收站（deleted_at 非空）的记录，已删数据不出现在主列表
+      safe('customers', () => sb.from('customers').select('*').is('deleted_at', null)),
+      safe('orders', () => sb.from('orders').select('*').is('deleted_at', null)),
+      safe('settings', () => sb.from('settings').select('*').eq('id', 1).maybeSingle())
+    ]);
     cache.designers = mergeServer('designers', designers && designers.data);
     cache.groups = mergeServer('groups', groups && groups.data);
     cache.customers = mergeServer('customers', customers && customers.data);

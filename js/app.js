@@ -984,7 +984,11 @@
     // 登录成功后（已认证身份）探测云端 schema 缺字段：
     // 解决首次启动 / F5 / 首次登录时，init 阶段以匿名身份探测误报"云端数据表缺字段"的问题。
     // 点顶部「重新连接云端」时 reconnectSupabase 也会探测（已登录态），逻辑一致、不会重复误报。
-    try { await DB.probeSupabaseSchema(); } catch (e) { console.warn('schema 探测失败', e); }
+    // 注意：改为后台 fire-and-forget，不再 await 阻塞首屏——探测完若缺字段再 toast 提示，
+    // 避免多一次 RPC 往返把进入桌面的时间往后推（桌面 PWA 跨区明显）。
+    DB.probeSupabaseSchema().then(async () => {
+      try { const s = await DB.getSettings(); if (s && s._schemaError) toast(s._schemaError); } catch (e) {}
+    }).catch(e => console.warn('schema 探测失败', e));
     // 关键修复（消除登录「慢半拍」）：不再阻塞 await 等待云端 settings。
     // 启动阶段 init() 已从 localStorage(ds_settings) 合并了「上一次成功加载的真实权限」
     // （含管理员对职务/设计师的覆盖，见 db.js persistSettings()）。这里立即以其渲染，
@@ -1009,9 +1013,6 @@
     // 移动端轨道模式下，确保 track transform 与当前页对齐（避免初始状态或旋转后错位）
     if (isSwipeMode()) switchTabQuiet(state.tab);
     updateOverdueBadge();
-    if (state._settings && state._settings._schemaError) {
-      toast(state._settings._schemaError);
-    }
     updateSync();
     hideSplash();
     // 后台对账（非阻塞）：用稳健方式再补拉一次云端 settings（已认证会话就绪 + 重试），
