@@ -3049,8 +3049,14 @@
     let html;
     if (isDetail) {
       html = `
-      <button class="close" data-close>×</button>
-      <h3>流程详情 · 节点完成时间 <span style="font-size:14px;color:var(--muted)">${esc(o.order_no)} · ${esc(o.title)}</span></h3>
+      <div class="order-detail-header">
+        <button class="close" data-close>×</button>
+        <div class="odh-title">流程详情</div>
+        <div class="odh-project-wrap">
+          <span class="odh-project">${esc(o.title)}</span>
+          <span class="order-no-tag">${esc(o.order_no)}</span>
+        </div>
+      </div>
       <div class="flow-detail">${flowBlock}</div>
       <details class="info-collapse" open><summary>订单信息（客户 / 金额 / 设计师 / 截稿时间，派单前请填写）</summary>
         ${infoForm}
