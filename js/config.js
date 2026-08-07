@@ -25,12 +25,16 @@ window.Cfg = (function () {
   // 纯云端模式：登录与数据均走 Supabase Auth + 云端库，无本地降级（断网不可用）。
   // service_role 仅在 Supabase Edge Function 服务端使用，切勿写入本文件或前端。
 
-  // ☁ 强制更新开关（仅前端部署相关，与云端数据无关）：
-  //   true  = 部署新版本且用户当前没有打开弹窗时，自动静默刷新到最新（无需手动点）；
-  //           若用户正在填写订单/表单弹窗，则降级为「发现新版本」提示，避免丢失未保存数据。
-  //   false = 提示式（弹「发现新版本」浮层，用户点「立即更新」才刷新）。
+  // ☁ 自动更新开关（仅前端部署相关，与云端数据无关）：
+  //   true  = 部署新版本且用户当前没有打开弹窗时，弹「发现新版本」浮层并倒计时
+  //           UPDATE_DELAY_SEC 秒后自动重新加载（用户可点「稍后」中止）。
+  //           不再无提示静默重载——那样用户会误以为程序闪退。
+  //           若用户正在填写订单/表单弹窗，则不倒计时，仅提示，避免丢失未保存数据。
+  //   false = 纯提示式（弹浮层但不倒计时，必须用户点「立即更新」才刷新）。
+  // 重载完成后会显示「已更新到最新版本」回执，明确告知这是版本更新而非异常。
   // 注意：每发布一次前端改动，需同步把 sw.js 的 CACHE 版本号 +1，浏览器才会检测到“新版本”。
   const FORCE_UPDATE = true;
+  const UPDATE_DELAY_SEC = 6;   // 自动更新前的倒计时秒数（给用户中止的机会，最小 3）
 
   const TASK_TYPES = ['名片', '画册', '展架', '喷绘', '标识', '文化墙', '展板', '门头', '设计', '排版', '其他'];
   // 职务（即权限角色）：管理员权限最大，可对各职务/各设计师配置显隐权限
@@ -170,6 +174,6 @@ window.Cfg = (function () {
     TASK_TYPES, ROLES, ACCESS_ROLES, FLOW, STATUS, REWORK_CATEGORIES,
     PERM_GROUPS, PERMISSIONS, defaultPermissions,
     DEFAULT_SETTINGS, perfCoefficient, orderCategory, normUrl, participants,
-    SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_UPDATE
+    SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_UPDATE, UPDATE_DELAY_SEC
   };
 })();

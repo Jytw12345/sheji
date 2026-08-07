@@ -322,8 +322,48 @@
     return o;
   }
 
-  // 新版本可用提示（带动态效果），由 index.html 的 Service Worker 更新检测调用
-  function showAppUpdate() {
+  /* ---------- 版本更新提示 ----------
+     设计原则：更新过程必须「可见、可中止、有回执」。
+     绝不无提示直接 reload —— 页面凭空重载会被用户误认为程序闪退。
+       1) 检测到新版本 → 弹浮层；自动模式下倒计时若干秒，期间可点「稍后」中止；
+       2) 真正刷新前 → 浮层切到「正在更新…」过渡态，让重载有前因；
+       3) 重载完成后 → 显示「已更新到最新版本」回执（见 showUpdatedNotice）。 */
+  let _auCountTimer = null;
+  function clearAuCount() { if (_auCountTimer) { clearInterval(_auCountTimer); _auCountTimer = null; } }
+
+  // 执行更新：先切过渡态，再唤醒等待中的新 SW（由 controllerchange 触发 reload）
+  function applyAppUpdate() {
+    clearAuCount();
+    // 打标记：重载后由 showUpdatedNotice() 读取并给出回执，明确"这是更新不是崩溃"
+    try { localStorage.setItem('ds_just_updated', String(Date.now())); } catch (e) {}
+    const el = $('#appUpdate');
+    if (el) {
+      const t = el.querySelector('.au-title'), s = el.querySelector('.au-sub');
+      const ico = el.querySelector('.au-ico'), foot = el.querySelector('.au-foot');
+      if (ico) ico.textContent = '⏳';
+      if (t) t.textContent = '正在更新…';
+      if (s) s.textContent = '正在载入新版本，页面稍后会自动重新加载，请勿关闭。';
+      if (foot) foot.innerHTML = '<div style="font-size:12.5px;color:#64748b;padding:2px 0">请稍候…</div>';
+      el.classList.add('show');
+    }
+    if (window.__swPendingUpdate) window.__swPendingUpdate();   // 新 SW 接管时触发 reload
+    const reg = window.__swReg;
+    const wake = (w) => { try { w.postMessage({ type: 'SKIP_WAITING' }); } catch (e) {} };
+    const fallbackReload = (ms) => setTimeout(() => { try { window.location.reload(); } catch (e) {} }, ms);
+    if (reg && reg.waiting) {
+      wake(reg.waiting);
+      fallbackReload(3000);        // 个别浏览器不触发 controllerchange，兜底刷新，避免卡在「正在更新…」
+    } else if (reg && reg.installing) {
+      const nw = reg.installing;   // 还在下载新版本：装好再唤醒
+      nw.addEventListener('statechange', () => { if (nw.state === 'installed') wake(nw); });
+      fallbackReload(5000);
+    } else {
+      fallbackReload(600);
+    }
+  }
+
+  // 新版本可用提示。auto=true → 倒计时后自动更新；auto=false → 必须用户点击
+  function showAppUpdate(auto) {
     let el = $('#appUpdate');
     if (!el) {
       el = document.createElement('div');
@@ -343,17 +383,66 @@
           '<button class="au-btn primary" id="auNow">立即更新</button>' +
         '</div>';
       document.body.appendChild(el);
-      $('#auNow').addEventListener('click', () => {
-        if (window.__swPendingUpdate) window.__swPendingUpdate();
-        const reg = window.__swReg;
-        if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-        else window.location.reload();
-      });
-      $('#auLater').addEventListener('click', () => el.classList.remove('show'));
+      $('#auNow').addEventListener('click', applyAppUpdate);
+      // 「稍后」：中止倒计时并收起。新 SW 仍在 waiting，下次进入应用或手动检查时会再提示
+      $('#auLater').addEventListener('click', () => { clearAuCount(); el.classList.remove('show'); });
     }
     requestAnimationFrame(() => el.classList.add('show'));
+
+    clearAuCount();
+    const sub = el.querySelector('.au-sub'), btn = el.querySelector('#auNow');
+    if (!auto) {
+      if (sub) sub.textContent = '已部署更新，点「立即更新」重新加载以应用。';
+      if (btn) btn.textContent = '立即更新';
+      return;
+    }
+    let left = Math.max(3, Number(window.Cfg && window.Cfg.UPDATE_DELAY_SEC) || 6);
+    const tick = () => {
+      if (left <= 0) { applyAppUpdate(); return; }
+      if (sub) sub.textContent = '已部署更新，' + left + ' 秒后自动重新加载；不想现在更新可点「稍后」。';
+      if (btn) btn.textContent = '立即更新（' + left + '）';
+      left--;
+    };
+    tick();
+    _auCountTimer = setInterval(tick, 1000);
   }
   window.showAppUpdate = showAppUpdate;
+
+  // 更新完成回执：重载后告知用户「刚才的重新加载是版本更新」，消除"闪退"错觉
+  function showUpdatedNotice() {
+    let flag = null;
+    try { flag = localStorage.getItem('ds_just_updated'); } catch (e) {}
+    if (!flag) return;
+    try { localStorage.removeItem('ds_just_updated'); } catch (e) {}
+    // 陈旧标记不提示：例如更新途中被关掉，隔天再打开时弹「已更新」反而误导
+    const ts = Number(flag);
+    if (ts && Date.now() - ts > 5 * 60 * 1000) return;
+    const el = document.createElement('div');
+    el.className = 'app-update';
+    el.innerHTML =
+      '<div class="au-top"></div>' +
+      '<div class="au-body">' +
+        '<div class="au-ico">✅</div>' +
+        '<div class="au-text">' +
+          '<div class="au-title">已更新到最新版本</div>' +
+          '<div class="au-sub">刚才的重新加载是版本更新，不是程序异常。</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="au-foot"><button class="au-btn primary">知道了</button></div>';
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    const close = () => { el.classList.remove('show'); setTimeout(() => { try { el.remove(); } catch (e) {} }, 400); };
+    const okBtn = el.querySelector('.au-btn');
+    if (okBtn) okBtn.addEventListener('click', close);
+    setTimeout(close, 6000);
+    // 附上版本号（异步读 sw.js，读不到就保持默认文案）
+    if (window.__readResVersion) {
+      window.__readResVersion().then(v => {
+        const s = el.querySelector('.au-sub');
+        if (s && v && v.indexOf('未知') < 0) s.textContent = '当前版本 ' + v + '，刚才的重新加载是版本更新，不是程序异常。';
+      }).catch(() => {});
+    }
+  }
 
   /* ---------- 模态框 ---------- */
   function openModal(html) { $('#modalBox').innerHTML = html; $('#modalMask').classList.add('show'); }
@@ -947,7 +1036,15 @@
           '<div class="login-brand login-brand-top">🎨 设计部工作台</div>' +
           '<div class="login-sub" id="loginHello"></div>' +
           '<div class="login-form" style="display:block">' +
-            '<div class="field"><label>邮箱</label><input id="loginEmail" type="email" value="' + esc(lastEmail) + '" placeholder="name@studio.com" autocomplete="username" /></div>' +
+            '<div class="field" id="loginEmailField"><label>邮箱</label><input id="loginEmail" type="email" value="" placeholder="name@studio.com" autocomplete="username" /></div>' +
+            '<div class="field" id="loginSelectedUser" style="display:none">' +
+              '<label>已选择账号</label>' +
+              '<div class="login-selected-user" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--input-bd,#d1d5db);border-radius:8px;background:var(--input-bg,#fff)">' +
+                '<span id="loginSelectedAvatar" style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:14px;flex-shrink:0"></span>' +
+                '<span id="loginSelectedName" style="font-weight:500;color:var(--text,#1f2937);flex:1"></span>' +
+                '<button type="button" id="loginSwitchUser" style="font-size:12px;color:var(--primary,#4f46e5);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline">切换账号</button>' +
+              '</div>' +
+            '</div>' +
             '<div class="field"><label>密码</label><div class="login-pw-wrap"><input id="loginPw" type="password" placeholder="请输入密码" autocomplete="current-password" /><button type="button" class="login-pw-eye" id="loginPwEye" aria-label="显示密码" title="显示/隐藏密码">👁</button></div></div>' +
             '<div class="login-err" id="loginErr"></div>' +
             '<button class="btn" id="loginSubmit" style="width:100%;margin-top:8px">登录</button>' +
@@ -980,20 +1077,15 @@
       eye.classList.toggle('on', show);
       pw.focus();
     });
-    // 兼容旧版遗留的掩码值：聚焦时若仍是掩码则清空，允许手动输入
+    // 邮箱输入框引用（手动输入时用于解除快捷选择态）
     const emInput = $('#loginEmail');
-    if (emInput) emInput.addEventListener('focus', () => {
-      if ((emInput.value || '').includes('已选择')) { emInput.value = ''; _quickLoginEmail = ''; }
-    });
     // 手动改邮箱 = 放弃快捷选择：取消高亮并清空密码，避免残留上一个人的密码被提交。
     // 注意只在「已有快捷选择态」时才介入：页面加载时浏览器自动填充邮箱同样会触发 input，
     // 此时若清空密码，会把浏览器刚填好的密码一起抹掉。
-    if (emInput) emInput.addEventListener('input', () => {
+      if (emInput) emInput.addEventListener('input', () => {
       if (!_quickLoginEmail) return;                    // 无选择态：交给浏览器自动填充，不干预
-      if (emInput.value === _quickLoginEmail) return;   // 值没变（同一账号），不算切换
       _quickLoginEmail = '';
-      $$('.login-quick .login-user').forEach(x => x.classList.remove('is-selected'));
-      const hint = $('#quickLoginHint'); if (hint) hint.style.display = 'none';
+      clearSelectedUser();                              // 切回邮箱输入框并取消高亮
       clearLoginPw();
     });
     // 清空密码框并复位「显示密码」眼睛状态（切换登录账号时必须调用）
@@ -1005,29 +1097,58 @@
       const e2 = $('#loginPwEye');
       if (e2) { e2.textContent = '👁'; e2.classList.remove('on'); }
     }
+    // 快捷登录：显示「已选择账号」卡片，隐藏邮箱输入框
+    function showSelectedUser(d) {
+      const emailField = $('#loginEmailField');
+      const selectedBox = $('#loginSelectedUser');
+      const avatar = $('#loginSelectedAvatar');
+      const name = $('#loginSelectedName');
+      if (emailField) emailField.style.display = 'none';
+      if (selectedBox) selectedBox.style.display = '';
+      if (avatar) {
+        avatar.textContent = esc((d.name || '?').trim().slice(0, 1));
+        avatar.style.background = avatarColor(d.name);
+      }
+      if (name) name.textContent = esc(d.name || '');
+    }
+    // 取消快捷选择态，切回手动输入
+    function clearSelectedUser() {
+      const emailField = $('#loginEmailField');
+      const selectedBox = $('#loginSelectedUser');
+      if (emailField) emailField.style.display = '';
+      if (selectedBox) selectedBox.style.display = 'none';
+      const emInput = $('#loginEmail');
+      if (emInput) { emInput.value = ''; emInput.focus(); }
+      $$('.login-quick .login-user').forEach(x => x.classList.remove('is-selected'));
+      const hint = $('#quickLoginHint'); if (hint) hint.style.display = 'none';
+    }
     // 密码重置改为「管理员代设」：登录页不再提供自助重置入口，引导联系管理员
     const loginFoot = $('.login-foot');
     if (loginFoot) loginFoot.title = '如忘记密码，请联系管理员在「设置 → 设计师管理」中代设新密码';
-    // 快捷登录：点击名字后填入该账号的真实邮箱。
-    // 必须写真实邮箱（不能用「●●● 已选择」掩码）：浏览器密码管理器按「域名 + 用户名」保存凭据，
-    // 用户名恒为同一串掩码时，A/B 两人的密码会被当成同一条凭据 —— 点 B 却自动填出 A 的密码。
-    // 同时切换账号必须清空密码框，否则上一个人已填入的密码会残留并被提交，导致登录失败。
+    // 切换账号：回到手动输入邮箱
+    const switchBtn = $('#loginSwitchUser');
+    if (switchBtn) switchBtn.addEventListener('click', () => { _quickLoginEmail = ''; clearSelectedUser(); clearLoginPw(); });
+    // 安全：点击头像快捷登录时，绝不把真实邮箱回显到输入框（公网部署会泄露账号）。
+    // 真实邮箱只保存在内存变量 _quickLoginEmail，提交登录时再使用。
+    // 同时规避了旧版「掩码串被密码管理器当成同一账号、A/B 密码串号」的坑：
+    // 现在邮箱框不写任何假用户名，浏览器自然不会把不同人的密码关联到同一个用户名。
+    // 切换账号仍须清空密码框，否则上一个人已填入的密码会残留并被提交，导致登录失败。
     let _quickLoginEmail = '';
     $$('.login-quick .login-user').forEach(b => b.addEventListener('click', () => {
       const did = b.dataset.did;
       const d = (state._designers || []).find(x => x.id === did);
       if (d && d.email) {
         const switching = _quickLoginEmail && _quickLoginEmail !== d.email;
-        _quickLoginEmail = d.email;
-        $('#loginEmail').value = d.email;
+        _quickLoginEmail = d.email;          // 仅存内存，不回显
+        showSelectedUser(d);                 // 显示「已选择账号」卡片，不显示邮箱明文
         clearLoginPw();                       // 关键修复：切人即清空，杜绝串号密码
         $('#loginPw').focus();
         const hint = $('#quickLoginHint');
         if (hint) {
           hint.style.display = '';
           hint.textContent = switching
-            ? '已切换到 ' + d.name + '，密码已清空，请输入 ' + d.name + ' 的密码'
-            : '已选择 ' + d.name + '，请输入密码后点登录';
+            ? '已切换到「' + d.name + '」，密码已清空，请输入其密码'
+            : '已选择「' + d.name + '」，请输入密码后点登录';
         }
         // 高亮选中按钮
         $$('.login-quick .login-user').forEach(x => x.classList.remove('is-selected'));
@@ -1047,7 +1168,8 @@
     // 登录时如果邮箱是掩码则用内部真实值；登录期间按钮进入 Loading，成功后记住账号，失败则抖动提示
     const origDoLogin = doLogin;
     window._doLogin = async function(email, pw) {
-      const actualEmail = (email || '').includes('已选择') ? _quickLoginEmail : (email || '');
+      // 优先使用快捷登录选中的内存邮箱；否则用输入框内容（手动输入或浏览器自动填充）
+      const actualEmail = _quickLoginEmail || (email || '').trim();
       const btn = $('#loginSubmit');
       if (btn) { btn.disabled = true; btn.classList.add('is-loading'); btn.textContent = '登录中…'; }
       try { await origDoLogin(actualEmail, pw); }
@@ -1095,6 +1217,8 @@
     sp.style.opacity = '0';
     sp.style.pointerEvents = 'none';
     setTimeout(() => sp.remove(), 320);
+    // 若本次加载是由版本更新触发的重载，给出回执（避免被当成程序闪退）
+    setTimeout(() => { try { showUpdatedNotice(); } catch (e) {} }, 900);
   }
 
   /* ---------------- 第三方库按需动态加载 ---------------- */
@@ -4459,7 +4583,43 @@
     renderPermConfig();
     fillLogDesigners();
     if (can('view_logs')) { try { await renderOpLogs(); } catch (e) { console.warn('初始加载操作日志失败', e); } }
+    renderAbout();   // 不 await：读版本要发一次网络请求，不该拖慢设置页渲染
     applyPermissions();
+  }
+  // 「设置 → 关于」：显示当前运行的资源版本 + 手动检查更新。
+  // 原先是右下角对所有人常驻的浮层，移到设置页后受 menu_settings 权限保护（默认仅管理员）。
+  let _aboutBound = false;
+  async function renderAbout() {
+    const el = $('#resVersionText');
+    if (el) {
+      el.textContent = '读取中…';
+      try { el.textContent = window.__readResVersion ? await window.__readResVersion() : '未知'; }
+      catch (e) { el.textContent = '未知'; }
+    }
+    if (_aboutBound) return;   // 事件只绑一次，renderSettings 每次进设置页都会调用
+    _aboutBound = true;
+    const btn = $('#btnCheckUpdate');
+    const hint = $('#checkUpdateHint');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (!window.__swCheckUpdate) { if (hint) hint.textContent = '当前环境不支持后台更新'; return; }
+      btn.disabled = true;
+      if (hint) hint.textContent = '正在检查…';
+      try {
+        await window.__swCheckUpdate();
+        await new Promise(r => setTimeout(r, 1500));   // 给新 SW 留出 install 时间
+        const reg = window.__swReg;
+        if (reg && (reg.waiting || reg.installing)) {
+          if (hint) hint.textContent = '发现新版本，正在应用…';
+          applyAppUpdate();   // 统一走更新流程：打回执标记 → 唤醒新 SW → 兜底刷新
+        } else {
+          if (hint) hint.textContent = '已是最新版本';
+          if (el && window.__readResVersion) { try { el.textContent = await window.__readResVersion(); } catch (e) {} }
+        }
+      } catch (e) {
+        if (hint) hint.textContent = '检查失败，请确认网络';
+      } finally { btn.disabled = false; }
+    });
   }
   async function saveParams() {
     if (!lockOp('saveParams')) return;
