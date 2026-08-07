@@ -855,33 +855,108 @@
     renderBindProfile(session.user);
   }
 
+  // ---------- 登录图形验证码（失败 3 次后启用，拖慢公网爆破、避免正常用户被锁死）----------
+  // 说明：验证码为纯前端生成，仅作「人类验证」辅助，真正的限流仍由服务端 login_attempts 负责。
+  let _captchaAnswer = '';
+  let _loginNeedCaptcha = false;
+  function genCaptcha() {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 排除易混字符 0/O/1/I/L
+    let code = '';
+    for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    _captchaAnswer = code;
+    const cv = document.getElementById('captchaCanvas');
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, w, h);
+    // 干扰线
+    for (let i = 0; i < 4; i++) {
+      ctx.strokeStyle = 'rgba(' + [Math.floor(Math.random() * 160), Math.floor(Math.random() * 160), Math.floor(Math.random() * 160)].join(',') + ',0.5)';
+      ctx.beginPath();
+      ctx.moveTo(Math.random() * w, Math.random() * h);
+      ctx.lineTo(Math.random() * w, Math.random() * h);
+      ctx.stroke();
+    }
+    // 字符（随机旋转、彩色）
+    for (let i = 0; i < code.length; i++) {
+      ctx.save();
+      ctx.translate(14 + i * 26, h / 2);
+      ctx.rotate((Math.random() - 0.5) * 0.5);
+      ctx.font = 'bold 24px Georgia, serif';
+      ctx.fillStyle = ['#1d4ed8', '#047857', '#b91c1c', '#7c3aed', '#c2410c'][i % 5];
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(code[i], 0, 0);
+      ctx.restore();
+    }
+    // 噪点
+    for (let i = 0; i < 30; i++) {
+      ctx.fillStyle = 'rgba(0,0,0,0.08)';
+      ctx.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+    }
+  }
+  function showCaptchaBox() {
+    const box = document.getElementById('captchaBox');
+    if (box) box.style.display = '';
+    genCaptcha();
+  }
+  function hideCaptchaBox() {
+    const box = document.getElementById('captchaBox');
+    if (box) box.style.display = 'none';
+    const inp = document.getElementById('captchaInput');
+    if (inp) inp.value = '';
+  }
+  function verifyCaptcha() {
+    const inp = document.getElementById('captchaInput');
+    if (!inp) return false;
+    return inp.value.trim().toUpperCase() === _captchaAnswer.toUpperCase();
+  }
+
   async function doLogin(email, pw) {
     if (!lockOp('login')) return;
     const errEl = $('#loginErr');
     try {
+      // 失败 3 次后进入验证码模式：必须先通过图形验证才允许继续尝试（不消耗失败配额）
+      if (_loginNeedCaptcha) {
+        if (!verifyCaptcha()) {
+          if (errEl) errEl.textContent = '请先正确完成图形验证（点击图片可换一张）';
+          const ci = document.getElementById('captchaInput'); if (ci) ci.value = '';
+          genCaptcha();
+          return;
+        }
+      }
       // 登录前检查账户锁定（防公网爆破）。阈值与服务端一致：15 分钟内失败 ≥5 次锁定 15 分钟。
       // 网络异常时 loginLockMinutes 返回 0，不阻断正常登录，仅失效限流保护。
       try {
         const remain = await DB.auth.loginLockMinutes(email);
         if (remain > 0) {
           if (errEl) errEl.textContent = '该账户登录尝试过于频繁，请于 ' + remain + ' 分钟后再试';
+          hideCaptchaBox(); _loginNeedCaptcha = false;
           return;
         }
       } catch (e) {}
       try {
         await DB.auth.signIn(email, pw);
-        // 登录成功：清空失败计数，解除锁定
+        // 登录成功：清空失败计数，解除锁定与验证码模式
         try { await DB.auth.clearLoginFailures(email); } catch (e) {}
+        _loginNeedCaptcha = false; hideCaptchaBox();
         logOp('登录', '账户'); // 仅在真正用密码登录时记录，避免刷新恢复会话被误记为登录
       } catch (e) {
         // 登录失败：记录一次失败；达阈值则账户锁定
         let cnt = 0;
         try { cnt = await DB.auth.recordLoginFailure(email); } catch (err) {}
+        if (cnt >= 3) {
+          // 进入（或保持）验证码模式，避免被无限爆破把正常用户锁死
+          _loginNeedCaptcha = true;
+          showCaptchaBox();
+        }
         if (cnt >= 5) {
+          _loginNeedCaptcha = false; hideCaptchaBox();
           if (errEl) errEl.textContent = '密码错误次数过多，账户已锁定 15 分钟，请稍后再试';
         } else {
           const left = 5 - cnt;
-          if (errEl) errEl.textContent = (e && e.message ? e.message : '登录失败') + '（还可尝试 ' + left + ' 次）';
+          if (errEl) errEl.textContent = (e && e.message ? e.message : '登录失败') +
+            (cnt >= 3 ? '（需完成图形验证再试）' : '（还可尝试 ' + left + ' 次）');
         }
         return;
       }
@@ -1069,6 +1144,14 @@
             '</div>' +
             '<div class="field"><label>密码</label><div class="login-pw-wrap"><input id="loginPw" type="password" placeholder="请输入密码" autocomplete="current-password" /><button type="button" class="login-pw-eye" id="loginPwEye" aria-label="显示密码" title="显示/隐藏密码">👁</button></div></div>' +
             '<div class="login-err" id="loginErr"></div>' +
+            '<div class="captcha-box" id="captchaBox" style="display:none">' +
+              '<label class="captcha-label">图形验证（区分大小写不敏感）</label>' +
+              '<div class="captcha-row">' +
+                '<input id="captchaInput" type="text" maxlength="4" autocomplete="off" placeholder="输入右侧字符" class="captcha-input" />' +
+                '<canvas id="captchaCanvas" width="120" height="40" class="captcha-canvas" title="点击可刷新"></canvas>' +
+                '<button type="button" id="captchaRefresh" class="captcha-refresh" title="换一张">↻</button>' +
+              '</div>' +
+            '</div>' +
             '<button class="btn" id="loginSubmit" style="width:100%;margin-top:8px">登录</button>' +
             '<div class="login-foot">密码问题请联系管理员重置</div>' +
           '</div>' +
@@ -1099,13 +1182,23 @@
       eye.classList.toggle('on', show);
       pw.focus();
     });
+    // 图形验证码：触发验证码模式后，刷新图片换一张；重新渲染登录界面时若处于验证码模式则恢复显示
+    const capCanvas = document.getElementById('captchaCanvas');
+    if (capCanvas) capCanvas.addEventListener('click', genCaptcha);
+    const capRefresh = document.getElementById('captchaRefresh');
+    if (capRefresh) capRefresh.addEventListener('click', () => {
+      genCaptcha();
+      const ci = document.getElementById('captchaInput');
+      if (ci) { ci.value = ''; ci.focus(); }
+    });
+    if (_loginNeedCaptcha) showCaptchaBox();
     // 邮箱输入框引用（手动输入时用于解除快捷选择态）
     const emInput = $('#loginEmail');
     // 手动改邮箱 = 放弃快捷选择：取消高亮并清空密码，避免残留上一个人的密码被提交。
-    // 注意只在「已有快捷选择态」时才介入：页面加载时浏览器自动填充邮箱同样会触发 input，
-    // 此时若清空密码，会把浏览器刚填好的密码一起抹掉。
+    // 仅在「已有快捷选择态且邮箱框可见可编辑」时才介入；快捷登录态下邮箱框已被禁用并隐藏，
+    // 浏览器自动填充不会（也不应）触发此处，避免把正确的快捷选择态误清掉、导致又退回隐藏的错误邮箱。
       if (emInput) emInput.addEventListener('input', () => {
-      if (!_quickLoginEmail) return;                    // 无选择态：交给浏览器自动填充，不干预
+      if (!_quickLoginEmail || emInput.disabled) return; // 无选择态或快捷登录态：不干预
       _quickLoginEmail = '';
       clearSelectedUser();                              // 切回邮箱输入框并取消高亮
       clearLoginPw();
@@ -1119,13 +1212,18 @@
       const e2 = $('#loginPwEye');
       if (e2) { e2.textContent = '👁'; e2.classList.remove('on'); }
     }
-    // 快捷登录：显示「已选择账号」卡片，隐藏邮箱输入框
+    // 快捷登录：显示「已选择账号」卡片，隔离并隐藏邮箱输入框
     function showSelectedUser(d) {
       const emailField = $('#loginEmailField');
       const selectedBox = $('#loginSelectedUser');
+      const emailInput = $('#loginEmail');
       const avatar = $('#loginSelectedAvatar');
       const name = $('#loginSelectedName');
       if (emailField) emailField.style.display = 'none';
+      // 关键修复：快捷登录态下把邮箱框清空、禁用、并关闭自动填充，
+      // 彻底切断浏览器「记忆的（可能过期/错误）邮箱」与本账号提交之间的联系，
+      // 避免隐藏的错误邮箱被提交导致「用户名无效」。
+      if (emailInput) { emailInput.value = ''; emailInput.disabled = true; emailInput.setAttribute('autocomplete', 'off'); }
       if (selectedBox) selectedBox.style.display = '';
       if (avatar) {
         avatar.textContent = esc((d.name || '?').trim().slice(0, 1));
@@ -1133,14 +1231,14 @@
       }
       if (name) name.textContent = esc(d.name || '');
     }
-    // 取消快捷选择态，切回手动输入
+    // 取消快捷选择态，切回手动输入（恢复邮箱框可编辑与自动填充）
     function clearSelectedUser() {
       const emailField = $('#loginEmailField');
       const selectedBox = $('#loginSelectedUser');
+      const emInput = $('#loginEmail');
       if (emailField) emailField.style.display = '';
       if (selectedBox) selectedBox.style.display = 'none';
-      const emInput = $('#loginEmail');
-      if (emInput) { emInput.value = ''; emInput.focus(); }
+      if (emInput) { emInput.disabled = false; emInput.setAttribute('autocomplete', 'username'); emInput.value = ''; emInput.focus(); }
       $$('.login-quick .login-user').forEach(x => x.classList.remove('is-selected'));
       const hint = $('#quickLoginHint'); if (hint) hint.style.display = 'none';
     }
@@ -2124,8 +2222,8 @@
       '</div>';
     $('#kpiGrid').innerHTML =
       kpi('总接单量', c.orders, '全部订单累计', '📋', '#6366f1') +
-      kpi('窗口营收', '¥' + money(c.totalRevenue), '全部订单累计', '💰', '#22c55e') +
-      kpi('窗口订单数', c.winOrders, '本月考核期内接单', '📦', '#0ea5e9') +
+      kpi(periodLabel + '应收', '¥' + money(c.totalRevenue), '考核期内应收合计', '💰', '#22c55e') +
+      kpi(periodLabel + '订单数', c.winOrders, '考核期内接单数', '📦', '#0ea5e9') +
       kpi('活跃设计师', c.designers, '在岗人数', '👥', '#8b5cf6') +
       kpi('客户 / 复购', c.customers + ' / ' + c.repeat, '复购=下单≥2次', '🔄', '#f59e0b');
 
@@ -2166,10 +2264,10 @@
       return mine.reduce((s, o) => s + (Number(o.amount) || 0), 0);
     });
     Charts.bar($('#chartPerf'), {
-      title: '设计师业绩（窗口营收）', horizontal: true,
+      title: '设计师业绩（' + periodLabel + '应收）', horizontal: true,
       labels: names,
       datasets: [
-        { label: '窗口营收(元)', data: revenue.map(v => Math.round(v)), color: '#4f46e5' }
+        { label: '应收(元)', data: revenue.map(v => Math.round(v)), color: '#4f46e5' }
       ]
     });
     Charts.bar($('#chartRate'), {
@@ -4759,6 +4857,7 @@
     fillLogDesigners();
     if (can('view_logs')) { try { await renderOpLogs(); } catch (e) { console.warn('初始加载操作日志失败', e); } }
     renderRecycleBin();   // 不 await：回收站需查询已删记录
+    renderLoginSecurity(); // 不 await：仅管理员查询被锁账号
     renderAbout();   // 不 await：读版本要发一次网络请求，不该拖慢设置页渲染
     updateLastBackupHint();
     applyPermissions();
@@ -4814,6 +4913,40 @@
         _recycleBound = true;
       }
     } catch (e) { box.innerHTML = '<div class="empty">加载回收站失败：' + esc(e.message) + '</div>'; }
+  }
+
+  // 「设置 → 登录安全管理」：管理员查看被锁定的账号并可手动解锁（清空失败记录，立即解除锁定）。
+  // 仅管理员可见；即便前端显示，非管理员调用后端 RPC 也会被 current_designer_role() 拒绝，双重保险。
+  let _loginSecBound = false;
+  async function renderLoginSecurity() {
+    const card = $('#settingsLoginSec');
+    if (!card) return;
+    const role = (state.currentUser && state.currentUser.role) || '';
+    if (role !== '管理员') { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const box = $('#loginSecList');
+    if (!box) return;
+    box.innerHTML = '<div class="empty">加载中…</div>';
+    try {
+      const list = await DB.auth.listLockedAccounts();
+      if (!list || !list.length) { box.innerHTML = '<div class="empty">当前没有账号被锁定</div>'; return; }
+      box.innerHTML = '<table class="tbl"><thead><tr><th>账号邮箱</th><th>失败次数</th><th>锁定至</th><th>操作</th></tr></thead><tbody>' +
+        list.map(r => '<tr><td>' + esc(r.email) + '</td><td>' + (r.failed_count || 0) + '</td><td>' + (r.locked_until ? fmtTime(r.locked_until) : '—') + '</td>' +
+          '<td><button class="btn sm" data-unlock="' + esc(r.email) + '">解锁</button></td></tr>').join('') +
+        '</tbody></table>';
+      if (!_loginSecBound) {
+        box.addEventListener('click', async e => {
+          const ub = e.target.closest('[data-unlock]');
+          if (ub) {
+            const email = ub.dataset.unlock;
+            if (!(await uiConfirm('确认解锁账号 ' + email + '？将清空其登录失败记录，立即解除锁定。'))) return;
+            try { await DB.auth.unlockAccount(email); logOp('解锁账号', '账户', email); toast('已解锁 ' + email); renderLoginSecurity(); }
+            catch (err) { toast('解锁失败：' + err.message); }
+          }
+        });
+        _loginSecBound = true;
+      }
+    } catch (e) { box.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; }
   }
 
   // 「设置 → 关于」：显示当前运行的资源版本 + 手动检查更新。

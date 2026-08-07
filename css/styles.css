@@ -1741,6 +1741,14 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .login-form { margin-top: 6px; }
 .login-pick { font-size: 13px; color: var(--ink); font-weight: 600; margin-bottom: 8px; }
 .login-err { color: var(--bad); font-size: 12.5px; min-height: 16px; margin: 6px 0 2px; }
+/* 登录图形验证码（失败 3 次后启用） */
+.captcha-box { margin: 4px 0 2px; }
+.captcha-label { display: block; font-size: 12.5px; color: var(--ink); margin-bottom: 4px; }
+.captcha-row { display: flex; align-items: center; gap: 8px; }
+.captcha-input { flex: 1; min-width: 0; height: 40px; font-size: 16px; letter-spacing: 3px; text-transform: uppercase; padding: 0 10px; border: 1px solid var(--input-bd, #d1d5db); border-radius: 8px; background: var(--input-bg, #fff); color: var(--text, #1f2937); }
+.captcha-canvas { border: 1px solid var(--input-bd, #d1d5db); border-radius: 8px; cursor: pointer; flex: 0 0 auto; }
+.captcha-refresh { flex: 0 0 auto; width: 40px; height: 40px; border: 1px solid var(--input-bd, #d1d5db); border-radius: 8px; background: var(--panel); color: var(--primary); font-size: 18px; cursor: pointer; }
+.captcha-refresh:hover { background: var(--bg, #f1f5f9); }
 .login-foot { text-align: right; margin-top: 8px; }
 .login-foot a { color: var(--primary); font-size: 12.5px; text-decoration: none; }
 .login-foot a:hover { text-decoration: underline; }

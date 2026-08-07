@@ -622,6 +622,16 @@ window.DB = (function () {
   async function clearLoginFailures(email) {
     try { await sb.rpc('clear_login_failures', { p_email: email }); } catch (e) {}
   }
+  // 管理员查看当前被锁定的账号（同一邮箱 15 分钟内失败 ≥5 次）。仅管理员可调。
+  async function listLockedAccounts() {
+    try { const { data, error } = await sb.rpc('list_locked_accounts'); if (error) throw error; return data || []; }
+    catch (e) { return []; }
+  }
+  // 管理员手动解锁账号（清空其登录失败记录，立即解除锁定）。仅管理员可调。
+  async function unlockAccount(email) {
+    try { const { error } = await sb.rpc('unlock_account', { p_email: email }); if (error) throw error; return true; }
+    catch (e) { throw e; }
+  }
   // 本人修改自己的登录密码：先校验当前密码（重新登录验证身份），再用客户端 API 更新。
   // 不依赖 service_role / Edge Function，任何已登录用户（设计师 / 店长 / 管理员）均可使用。
   async function authUpdateSelfPassword(oldPw, newPw) {
@@ -703,7 +713,7 @@ window.DB = (function () {
     onChange: authOnChange,
     bindProfile: authBindProfile,
     resetPassword: authResetPassword,
-    loginLockMinutes, recordLoginFailure, clearLoginFailures,
+    loginLockMinutes, recordLoginFailure, clearLoginFailures, listLockedAccounts, unlockAccount,
     updateSelfPassword: authUpdateSelfPassword,
     createUser: authCreateUser,
     deleteUser: authDeleteUser,

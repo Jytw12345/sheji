@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v292" />
+  <link rel="stylesheet" href="css/styles.css?v295" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -398,6 +398,12 @@
         <div id="recycleBinList" class="table-scroll"></div>
       </div>
 
+      <div class="card" id="settingsLoginSec" style="display:none">
+        <h3>登录安全管理 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员）</span></h3>
+        <p class="sub" style="color:var(--muted);margin:8px 0 12px">查看因登录失败过多被锁定的账号，可手动解除锁定（清空其失败记录，立即恢复登录）。</p>
+        <div id="loginSecList" class="table-scroll"></div>
+      </div>
+
       <div class="card" data-perm="manage_permissions">
         <h3>权限配置 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员）</span></h3>
         <p class="sub" style="color:var(--muted);margin-bottom:10px">为「管理员 / 店长 / 设计师」三个职务设置各菜单与按钮的默认显隐，并可对单个设计师做个性化覆盖。修改即时生效。</p>
@@ -462,12 +468,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v292"></script>
-  <script defer src="js/db.js?v292"></script>
-  <script defer src="js/calc.js?v292"></script>
-  <script defer src="js/charts.js?v292"></script>
-  <script defer src="js/export.js?v292"></script>
-  <script defer src="js/app.js?v292"></script>
+  <script defer src="js/config.js?v295"></script>
+  <script defer src="js/db.js?v295"></script>
+  <script defer src="js/calc.js?v295"></script>
+  <script defer src="js/charts.js?v295"></script>
+  <script defer src="js/export.js?v295"></script>
+  <script defer src="js/app.js?v295"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）

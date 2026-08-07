@@ -193,7 +193,8 @@ window.Calc = (function () {
       return n >= 2;
     }).length;
 
-    const totalRevenue = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+    // 仪表盘「窗口营收/应收」：应随 本期/上期 切换，只统计当前考核窗口内订单
+    const totalRevenue = winOrders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
 
     return {
       win, settings,
