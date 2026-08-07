@@ -13,6 +13,7 @@
     _subscribed: false,
     orderPage: 1,
     customerPage: 1,
+    customerFilter: { q: '', type: 'all' },
     sortDir: 'desc',
     orderSort: { key: 'intake_at', dir: 'desc' }, // 订单列表列排序
     _ordersDefaulted: false,
@@ -855,12 +856,32 @@
 
   async function doLogin(email, pw) {
     if (!lockOp('login')) return;
+    const errEl = $('#loginErr');
     try {
+      // 登录前检查账户锁定（防公网爆破）。阈值与服务端一致：15 分钟内失败 ≥5 次锁定 15 分钟。
+      // 网络异常时 loginLockMinutes 返回 0，不阻断正常登录，仅失效限流保护。
+      try {
+        const remain = await DB.auth.loginLockMinutes(email);
+        if (remain > 0) {
+          if (errEl) errEl.textContent = '该账户登录尝试过于频繁，请于 ' + remain + ' 分钟后再试';
+          return;
+        }
+      } catch (e) {}
       try {
         await DB.auth.signIn(email, pw);
+        // 登录成功：清空失败计数，解除锁定
+        try { await DB.auth.clearLoginFailures(email); } catch (e) {}
         logOp('登录', '账户'); // 仅在真正用密码登录时记录，避免刷新恢复会话被误记为登录
       } catch (e) {
-        const el = $('#loginErr'); if (el) el.textContent = (e && e.message) ? e.message : '登录失败';
+        // 登录失败：记录一次失败；达阈值则账户锁定
+        let cnt = 0;
+        try { cnt = await DB.auth.recordLoginFailure(email); } catch (err) {}
+        if (cnt >= 5) {
+          if (errEl) errEl.textContent = '密码错误次数过多，账户已锁定 15 分钟，请稍后再试';
+        } else {
+          const left = 5 - cnt;
+          if (errEl) errEl.textContent = (e && e.message ? e.message : '登录失败') + '（还可尝试 ' + left + ' 次）';
+        }
         return;
       }
       await afterAuthLogin();
@@ -2240,10 +2261,10 @@
       const cat = window.Cfg.orderCategory(Number(o.amount) || 0, state._settings);
       const collabNames = (Array.isArray(o.collab_designer_ids) ? o.collab_designer_ids : [])
         .map(id => dsMap[id]).filter(Boolean);
-      const designerCell = (dsMap[o.assigned_designer_id] || '<span style="color:var(--muted)">未派</span>') +
-        (collabNames.length ? ' <span class="collab-tag">+' + collabNames.join('/') + '</span>' : '');
+      const designerCell = (esc(dsMap[o.assigned_designer_id]) || '<span style="color:var(--muted)">未派</span>') +
+        (collabNames.length ? ' <span class="collab-tag">+' + collabNames.map(esc).join('/') + '</span>' : '');
       const reworkCell = o.rework_category
-        ? ' <span class="badge ' + (o.rework_category === '设计原因' ? 'bad' : 'warn') + '">' + o.rework_category + '</span>' : '';
+        ? ' <span class="badge ' + (o.rework_category === '设计原因' ? 'bad' : 'warn') + '">' + esc(o.rework_category) + '</span>' : '';
       return '<tr data-id="' + o.id + '">' +
         '<td>' + esc(o.order_no || '') + '</td>' +
         '<td>' + esc(o.title) + (o.notes ? ' <span title="' + esc(o.notes) + '">📝</span>' : '') + '</td>' +
@@ -2361,6 +2382,16 @@
       state._orderDraftRestored = false;
       state._orderDraftTs = null;
       state._orderDraftNewCust = null;
+    }
+    renderOrderModal();
+  }
+  // 从客户列表/详情「为该客户新建订单」：复用 newOrder 构造默认订单，再预填客户并打开弹窗
+  async function newOrderForCustomer(cid) {
+    const c = (state._customers || []).find(x => x.id === cid);
+    await newOrder();
+    if (c) {
+      state.editingOrder.customer_id = c.id;
+      state.editingOrder.customer_name = c.name;
     }
     renderOrderModal();
   }
@@ -3973,7 +4004,7 @@
         const designTitle = isAdmin ? '管理员默认不参与设计接单' : (can('manage_designers') ? '是否可派单/协作/出现在工作台' : '无权限');
         const perfTitle = isAdmin ? '管理员默认不计入团队统计' : (can('manage_designers') ? '是否计入绩效/经营分析统计' : '无权限');
         const avgTitle = isAdmin ? '管理员默认不计入团队平均' : (can('manage_designers') ? '是否纳入团队人均/排名分母' : '无权限');
-        return '<tr><td>' + esc(d.name) + '</td><td>' + esc(d.role) + '</td><td>' + (gMap[d.group_id] || '—') + '</td>' +
+        return '<tr><td>' + esc(d.name) + '</td><td>' + esc(d.role) + '</td><td>' + esc(gMap[d.group_id] || '—') + '</td>' +
         '<td class="num">' + inProgress(d.id) + '</td>' +
         '<td><button class="btn sm status-toggle ' + (d.active === false ? 'off' : 'on') + '" data-act="' + d.id + '"' + (disabled ? ' disabled' : '') + '>' + (d.active === false ? '停用' : '在岗') + '</button></td>' +
         '<td style="text-align:center"><label class="tbl-cb"><input type="checkbox" class="design-cb" data-design="' + d.id + '"' + (designOn ? ' checked' : '') + (disabled ? ' disabled' : '') + ' title="' + designTitle + '"><span class="box"></span></label></td>' +
@@ -4301,8 +4332,37 @@
    * 客户
    * ============================================================ */
   async function renderCustomers() {
-    const [cs, orders] = [state._customers || [], state._orders || []];
-    // 分页：每页 50，避免客户量过大时一次性渲染导致卡顿
+    // 绑定客户搜索 / 类型筛选栏（仅一次）
+    if (!state._custFilterBound) {
+      const ci = $('#custSearch');
+      if (ci) ci.addEventListener('input', () => {
+        clearTimeout(state._custFilterTimer);
+        state._custFilterTimer = setTimeout(() => {
+          state.customerFilter.q = ci.value; state.customerPage = 1; renderCustomers();
+        }, 250);
+      });
+      const ct = $('#custTypeFilter');
+      if (ct) ct.addEventListener('change', () => { state.customerFilter.type = ct.value; state.customerPage = 1; renderCustomers(); });
+      if (ci && state.customerFilter.q) ci.value = state.customerFilter.q;
+      if (ct && state.customerFilter.type) ct.value = state.customerFilter.type;
+      state._custFilterBound = true;
+    }
+    const orders = state._orders || [];
+    const rawCs = state._customers || [];
+    const f = state.customerFilter || { q: '', type: 'all' };
+    const q = (f.q || '').trim().toLowerCase();
+    // 分页前先按搜索关键字 / 类型筛选
+    const cs = rawCs.filter(c => {
+      const co = orders.filter(o => o.customer_id === c.id);
+      if (f.type === 'repeat' && co.length < 2) return false;
+      if (f.type === 'new' && co.length >= 2) return false;
+      if (q) {
+        const hay = [c.name, c.company, c.phone, c.tag, c.address].join(' ').toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    });
+    // 分页：每页 20，避免客户量过大时一次性渲染导致卡顿
     const total = cs.length;
     const totalPages = Math.max(1, Math.ceil(total / CUSTOMER_PAGE_SIZE));
     if (state.customerPage < 1) state.customerPage = 1;
@@ -4340,6 +4400,11 @@
       table._actBound = true;
     }
     renderCustomersPager(total, page, totalPages);
+    const fi = $('#custFilterInfo');
+    if (fi) {
+      const all = rawCs.length;
+      fi.textContent = (total < all) ? ('筛选后 ' + total + ' / 共 ' + all + ' 个客户') : ('共 ' + all + ' 个客户');
+    }
     applyPermissions();
     updateSwipeDiag();
   }
@@ -4480,15 +4545,24 @@
       ${ (Array.isArray(c.contacts_json) && c.contacts_json.length) ? '<div style="margin-top:10px"><b>更多联系人：</b><div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px">' + c.contacts_json.map(ct => '<span class="cust-pill">' + esc(ct.role || '联系人') + '：' + esc(ct.name || '') + (ct.phone ? ' ' + esc(ct.phone) : '') + '</span>').join('') + '</div></div>' : '' }
       <p style="color:var(--muted)">${esc(c.notes || '')}</p>
       <h3>历史订单（${orders.length}）</h3>
-      <div class="table-scroll"><table class="tbl"><thead><tr><th>单号</th><th>项目</th><th>金额</th><th>状态</th><th>接单</th></tr></thead><tbody>` +
+      <div class="table-scroll"><table class="tbl" id="custHistoryTable"><thead><tr><th>单号</th><th>项目</th><th>金额</th><th>状态</th><th>接单</th></tr></thead><tbody>` +
       (orders.length ? orders.slice().sort((a, b) => (a.intake_at || '').localeCompare(b.intake_at || '')).map(o =>
-        '<tr><td>' + esc(o.order_no) + '</td><td>' + esc(o.title) + '</td><td class="num">¥' + money(o.amount) + '</td><td>' + pill(o.status) + '</td><td>' + fmtTime(o.intake_at) + '</td></tr>'
+        '<tr style="cursor:pointer" data-oid="' + o.id + '" title="点击查看该订单"><td>' + esc(o.order_no) + '</td><td>' + esc(o.title) + '</td><td class="num">¥' + money(o.amount) + '</td><td>' + pill(o.status) + '</td><td>' + fmtTime(o.intake_at) + '</td></tr>'
       ).join('') : '<tr><td colspan="5" class="empty">暂无订单</td></tr>') + '</tbody></table></div>' +
-      '<div class="modal-foot">' + (can('customers_edit') ? '<button class="btn" id="cEdit">编辑</button>' : '') + '<button class="btn secondary" id="cClose" data-close>关闭</button></div>';
+      '<div class="modal-foot">' + (can('customers_edit') ? '<button class="btn" id="cEdit">编辑</button>' : '') +
+        (can('orders_create') ? '<button class="btn primary" id="cNewOrder">为该客户新建订单</button>' : '') +
+        '<button class="btn secondary" id="cClose" data-close>关闭</button></div>';
     openModal(html);
     $$('#modalBox [data-close]').forEach(b => b.addEventListener('click', () => closeModal()));
     const cEdit = $('#cEdit'); if (cEdit) cEdit.addEventListener('click', () => { closeModal(); openCustomerModal(c); });
+    const cNewOrder = $('#cNewOrder'); if (cNewOrder) cNewOrder.addEventListener('click', () => { closeModal(); newOrderForCustomer(c.id); });
     const cClose = $('#cClose'); if (cClose) cClose.addEventListener('click', () => closeModal());
+    // 历史订单行点击 → 直接打开对应订单详情（#custHistoryTable 每次 openModal 都重建，不会重复绑定）
+    const histTable = $('#custHistoryTable');
+    if (histTable) histTable.addEventListener('click', e => {
+      const tr = e.target.closest('tr[data-oid]');
+      if (tr) openOrder(tr.dataset.oid);
+    });
   }
 
   /* ============================================================
@@ -4585,6 +4659,7 @@
     if (can('view_logs')) { try { await renderOpLogs(); } catch (e) { console.warn('初始加载操作日志失败', e); } }
     renderRecycleBin();   // 不 await：回收站需查询已删记录
     renderAbout();   // 不 await：读版本要发一次网络请求，不该拖慢设置页渲染
+    updateLastBackupHint();
     applyPermissions();
   }
   // 「设置 → 回收站」：列出已软删除的订单/客户，可还原或彻底删除。
@@ -4593,36 +4668,45 @@
   async function renderRecycleBin() {
     const card = $('#settingsRecycle');
     if (!card) return;
-    if (!can('orders_delete') && !can('customers_delete')) { card.style.display = 'none'; return; }
+    if (!can('orders_delete') && !can('customers_delete') && !can('manage_designers')) { card.style.display = 'none'; return; }
     card.style.display = '';
     const box = $('#recycleBinList');
     if (!box) return;
     box.innerHTML = '<div class="empty">加载中…</div>';
     try {
-      const [ods, cs] = await Promise.all([DB.listDeleted('orders'), DB.listDeleted('customers')]);
+      const tasks = [DB.listDeleted('orders'), DB.listDeleted('customers')];
+      if (can('manage_designers')) tasks.push(DB.listDeleted('groups'));
+      const [ods, cs, gs] = await Promise.all(tasks);
       const rows = [];
       (ods || []).forEach(o => rows.push({ type: '订单', table: 'orders', id: o.id, title: (o.order_no || '') + ' ' + (o.title || ''), deleted_at: o.deleted_at }));
       (cs || []).forEach(c => rows.push({ type: '客户', table: 'customers', id: c.id, title: c.name || '', deleted_at: c.deleted_at }));
+      (gs || []).forEach(g => rows.push({ type: '分组', table: 'groups', id: g.id, title: g.name || '', deleted_at: g.deleted_at }));
       if (!rows.length) { box.innerHTML = '<div class="empty">回收站为空</div>'; return; }
       box.innerHTML = '<table class="tbl"><thead><tr><th>类型</th><th>名称</th><th>删除时间</th><th>操作</th></tr></thead><tbody>' +
-        rows.map(r => '<tr><td>' + r.type + '</td><td>' + esc(r.title) + '</td><td>' + (r.deleted_at ? fmtTime(r.deleted_at) : '—') + '</td><td>' +
-          (can(r.table === 'orders' ? 'orders_delete' : 'customers_delete') ?
-            '<button class="btn sm" data-restore="' + r.table + '|' + r.id + '">还原</button>' : '') +
-          (can('orders_delete') ?
-            ' <button class="btn sm danger" data-purge="' + r.table + '|' + r.id + '">彻底删除</button>' : '') +
-          '</td></tr>').join('') + '</tbody></table>';
+        rows.map(r => {
+          const canRestore = r.table === 'orders' ? can('orders_delete')
+            : r.table === 'customers' ? can('customers_delete')
+            : can('manage_designers');
+          const canPurge = r.table === 'orders' ? can('orders_delete')
+            : r.table === 'customers' ? can('orders_delete')
+            : can('manage_designers');
+          return '<tr><td>' + r.type + '</td><td>' + esc(r.title) + '</td><td>' + (r.deleted_at ? fmtTime(r.deleted_at) : '—') + '</td><td>' +
+            (canRestore ? '<button class="btn sm" data-restore="' + r.table + '|' + r.id + '">还原</button>' : '') +
+            (canPurge ? ' <button class="btn sm danger" data-purge="' + r.table + '|' + r.id + '">彻底删除</button>' : '') +
+            '</td></tr>';
+        }).join('') + '</tbody></table>';
       if (!_recycleBound) {
         box.addEventListener('click', async e => {
           const rb = e.target.closest('[data-restore]');
           const pb = e.target.closest('[data-purge]');
           if (rb) {
             const [t, id] = rb.dataset.restore.split('|');
-            try { await DB.restoreDeleted(t, id); logOp('还原记录', t === 'orders' ? '订单' : '客户', id); toast('已还原'); renderRecycleBin(); await refreshAll(); }
+            try { await DB.restoreDeleted(t, id); logOp('还原记录', t === 'orders' ? '订单' : t === 'customers' ? '客户' : '分组', id); toast('已还原'); renderRecycleBin(); await refreshAll(); }
             catch (err) { toast('还原失败：' + err.message); }
           } else if (pb) {
             const [t, id] = pb.dataset.purge.split('|');
             if (!(await uiConfirm('彻底删除后将无法恢复，确认？'))) return;
-            try { await DB.purgeDeleted(t, id); logOp('彻底删除', t === 'orders' ? '订单' : '客户', id); toast('已彻底删除'); renderRecycleBin(); await refreshAll(); }
+            try { await DB.purgeDeleted(t, id); logOp('彻底删除', t === 'orders' ? '订单' : t === 'customers' ? '客户' : '分组', id); toast('已彻底删除'); renderRecycleBin(); await refreshAll(); }
             catch (err) { toast('彻底删除失败：' + err.message); }
           }
         });
@@ -4687,12 +4771,55 @@
       toast('参数已保存'); await refreshAll();
     } finally { unlockOp('saveParams'); }
   }
-  function exportAll() {
-    const data = { designers: state._designers, groups: state._groups, customers: state._customers, orders: state._orders, exportedAt: new Date().toISOString() };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = '设计部数据备份.json';
-    document.body.appendChild(a); a.click(); setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-    toast('已导出全部数据(JSON)');
+  async function exportAll() {
+    if (!lockOp('exportAll')) return;
+    const btn = $('#btnExportAll'); if (btn) btn.disabled = true;
+    try {
+      const me = state._me || {};
+      const exportedAt = new Date().toISOString();
+      const timestamp = exportedAt.slice(0, 19).replace(/[-:T]/g, '');
+      const logs = can('view_logs') ? await DB.queryLogs({ limit: 5000 }) : [];
+      const data = {
+        meta: {
+          app: '设计部工作台',
+          version: (typeof CACHE !== 'undefined' ? CACHE : ''),
+          exportedAt,
+          exportedBy: me.name || me.email || '',
+          exportedById: me.id || ''
+        },
+        settings: state._settings || {},
+        designers: state._designers || [],
+        groups: state._groups || [],
+        customers: state._customers || [],
+        orders: state._orders || [],
+        operation_logs: logs
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '设计部数据备份-' + timestamp + '.json';
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+      try { localStorage.setItem('ds_last_backup', exportedAt); } catch (e) {}
+      updateLastBackupHint();
+      toast('已导出全部数据(JSON)');
+      logOp('导出备份', '数据管理');
+    } catch (e) {
+      toast('导出失败：' + ((e && e.message) || e));
+    } finally {
+      if (btn) btn.disabled = false;
+      unlockOp('exportAll');
+    }
+  }
+  function updateLastBackupHint() {
+    const el = $('#lastBackupHint'); if (!el) return;
+    const raw = (() => { try { return localStorage.getItem('ds_last_backup'); } catch (e) { return null; } })();
+    if (!raw) { el.textContent = '尚未备份'; return; }
+    try {
+      const d = new Date(raw);
+      el.textContent = '上次备份：' + d.toLocaleString('zh-CN', { hour12: false }) + '（本设备）';
+    } catch (e) { el.textContent = '上次备份：' + raw; }
   }
   // 本人修改登录密码：校验当前密码 + 两次新密码一致，调用 Supabase 客户端 API
   async function updateMyPassword() {
@@ -4838,7 +4965,7 @@
       (list.length ? list.map(o =>
         '<tr><td>' + esc(o.order_no) + '</td><td>' + esc(o.title) + '</td><td>' + esc(o.customer_name || '') + '</td>' +
         '<td>' + esc(o.participantNames.join(' / ')) + '</td><td>' + pill(o.status) + '</td><td class="num">' + o.revision_count + '</td>' +
-        '<td>' + (o.rework_category ? '<span class="badge ' + (o.rework_category === '设计原因' ? 'bad' : 'warn') + '">' + o.rework_category + '</span>' : '<span style="color:var(--muted)">—</span>') + '</td>' +
+        '<td>' + (o.rework_category ? '<span class="badge ' + (o.rework_category === '设计原因' ? 'bad' : 'warn') + '">' + esc(o.rework_category) + '</span>' : '<span style="color:var(--muted)">—</span>') + '</td>' +
         '<td class="num">' + (o.complaint_count ? '<span class="badge bad">' + o.complaint_count + '</span>' : '0') + '</td>' +
         '<td class="num">' + (o.cycleDays != null ? fmtCycle(o.cycleDays) : '—') + '</td>' +
         '<td class="num">¥' + money(o.amount) + '</td></tr>'

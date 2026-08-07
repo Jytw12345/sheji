@@ -132,7 +132,7 @@ window.DB = (function () {
       catch (e) { console.warn('[' + table + '] 加载失败，已隔离：', e && e.message); return null; }
     }
     const designers = await safe('designers', () => sb.from('designers').select('*'));
-    const groups = await safe('groups', () => sb.from('groups').select('*'));
+    const groups = await safe('groups', () => sb.from('groups').select('*').is('deleted_at', null));
     // 软删除：拉取时过滤掉已移入回收站（deleted_at 非空）的记录，已删数据不出现在主列表
     const customers = await safe('customers', () => sb.from('customers').select('*').is('deleted_at', null));
     const orders = await safe('orders', () => sb.from('orders').select('*').is('deleted_at', null));
@@ -350,7 +350,7 @@ window.DB = (function () {
   async function remove(table, id) {
     // orders / customers 走软删除（移入回收站，可由管理员/店长还原）；其余表保持物理删除。
     // 软删除经由 DB 层 RPC（soft_delete_record）校验角色，避免退回「任何登录用户可改」的漏洞。
-    if (table === 'orders' || table === 'customers') {
+    if (table === 'orders' || table === 'customers' || table === 'groups') {
       const { error } = await sb.rpc('soft_delete_record', { p_table: table, p_id: id });
       if (error) throw error;
       cache[table] = cache[table].filter(x => x.id !== id);
@@ -380,7 +380,7 @@ window.DB = (function () {
   async function reconcile(table) {
     try {
       let q = sb.from(table).select('*');
-      if (table === 'orders' || table === 'customers') q = q.is('deleted_at', null);
+      if (table === 'orders' || table === 'customers' || table === 'groups') q = q.is('deleted_at', null);
       const res = await q;
       cache[table] = mergeServer(table, res.data);
       emit();
@@ -609,6 +609,19 @@ window.DB = (function () {
     const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin });
     if (error) throw error;
   }
+  // ---------- 登录失败限流 / 账户锁定 ----------
+  // 阈值：同一邮箱 15 分钟内失败 ≥5 次 → 锁定 15 分钟（与服务端 RPC 保持一致）。
+  async function loginLockMinutes(email) {
+    try { const { data, error } = await sb.rpc('login_attempt_state', { p_email: email }); if (error) return 0; return data || 0; }
+    catch (e) { return 0; }   // 网络异常时不阻断登录，仅失效限流保护
+  }
+  async function recordLoginFailure(email) {
+    try { const { data } = await sb.rpc('record_login_failure', { p_email: email }); return data || 0; }
+    catch (e) { return 0; }
+  }
+  async function clearLoginFailures(email) {
+    try { await sb.rpc('clear_login_failures', { p_email: email }); } catch (e) {}
+  }
   // 本人修改自己的登录密码：先校验当前密码（重新登录验证身份），再用客户端 API 更新。
   // 不依赖 service_role / Edge Function，任何已登录用户（设计师 / 店长 / 管理员）均可使用。
   async function authUpdateSelfPassword(oldPw, newPw) {
@@ -690,6 +703,7 @@ window.DB = (function () {
     onChange: authOnChange,
     bindProfile: authBindProfile,
     resetPassword: authResetPassword,
+    loginLockMinutes, recordLoginFailure, clearLoginFailures,
     updateSelfPassword: authUpdateSelfPassword,
     createUser: authCreateUser,
     deleteUser: authDeleteUser,

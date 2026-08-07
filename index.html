@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v275" />
+  <link rel="stylesheet" href="css/styles.css?v282" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -197,6 +197,19 @@
         <button class="btn" id="btnNewCustomer" data-perm="customers_create">+ 新建客户</button>
       </div>
       <div class="card">
+        <div class="toolbar">
+          <div class="toolbar-main">
+            <div class="toolbar-top">
+              <div class="field" style="flex:1;min-width:0"><label>搜索</label><input id="custSearch" placeholder="名称 / 电话 / 联系人 / 标注…" autocomplete="nope" /></div>
+              <div class="field"><label>类型</label><select id="custTypeFilter">
+                <option value="all">全部客户</option>
+                <option value="repeat">复购客户</option>
+                <option value="new">新客</option>
+              </select></div>
+            </div>
+          </div>
+          <div class="pager-info" id="custFilterInfo" style="white-space:nowrap;flex-shrink:0;margin:0 0 0 auto;align-self:center;"></div>
+        </div>
         <div class="table-scroll"><table class="tbl" id="customersTable"></table></div>
       </div>
       <div class="pager" id="customersPager"></div>
@@ -365,7 +378,10 @@
       <div class="card" data-perm="manage_data">
         <h3>数据管理</h3>
         <p class="sub" style="color:var(--muted)">导出全部业务数据为 JSON 备份。正式使用期间不再提供「载入示例数据、清空数据、本地推送云端」等演示/高危操作。</p>
-        <button class="btn secondary" id="btnExportAll">导出全部(JSON)</button>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button class="btn secondary" id="btnExportAll">导出全部(JSON)</button>
+          <span class="sub" id="lastBackupHint" style="color:var(--muted)">—</span>
+        </div>
       </div>
       <div class="card" id="settingsRecycle" style="display:none">
         <h3>回收站 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员/店长）</span></h3>
@@ -437,12 +453,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v275"></script>
-  <script defer src="js/db.js?v275"></script>
-  <script defer src="js/calc.js?v275"></script>
-  <script defer src="js/charts.js?v275"></script>
-  <script defer src="js/export.js?v275"></script>
-  <script defer src="js/app.js?v275"></script>
+  <script defer src="js/config.js?v282"></script>
+  <script defer src="js/db.js?v282"></script>
+  <script defer src="js/calc.js?v282"></script>
+  <script defer src="js/charts.js?v282"></script>
+  <script defer src="js/export.js?v282"></script>
+  <script defer src="js/app.js?v282"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）
