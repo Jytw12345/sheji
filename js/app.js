@@ -1719,11 +1719,15 @@
     function isInsideOverlay(el) {
       return !!(el && el.closest && el.closest('.modal-mask, .modal, .customer-suggest, .gs-result, .cst-list, .dropdown-list, .login-overlay'));
     }
+    // 表格/列表等内容区滑动时不接管下拉刷新，避免滚动订单列表等时被截断
+    function isInsideScrollContent(el) {
+      return !!(el && el.closest && el.closest('table, tbody, thead, tr, td, th, .scrollable, .no-ptr'));
+    }
 
     window.addEventListener('touchstart', (e) => {
       if (refreshing) return;
       // 在弹窗/抽屉/下拉浮层内部滑动时，全局下拉刷新不应接管，避免覆盖层滚动到底后继续下拉触发刷新
-      if (isInsideOverlay(e.target)) { active = false; return; }
+      if (isInsideOverlay(e.target) || isInsideScrollContent(e.target)) { active = false; return; }
       const root = getScrollRoot();
       startX = e.touches[0].clientX;
       if (root.scrollTop <= 0) { startY = e.touches[0].clientY; active = true; pull = 0; }
@@ -1732,7 +1736,7 @@
 
     window.addEventListener('touchmove', (e) => {
       if (!active || refreshing) return;
-      if (isInsideOverlay(e.target)) return;
+      if (isInsideOverlay(e.target) || isInsideScrollContent(e.target)) return;
       const root = getScrollRoot();
       const dx = e.touches[0].clientX - startX;
       const dy = e.touches[0].clientY - startY;

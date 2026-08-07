@@ -2069,6 +2069,7 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
     padding: 14px;
     box-sizing: border-box;
     overflow-y: auto;
+    overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
     background: var(--bg);
   }
