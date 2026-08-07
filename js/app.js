@@ -2223,10 +2223,10 @@
       '</div>';
     $('#kpiGrid').innerHTML =
       kpi('总接单量', c.orders, '全部订单累计', '📋', '#6366f1') +
-      kpi(periodLabel + '应收', '¥' + money(c.totalRevenue), '考核期内应收合计', '💰', '#22c55e') +
+      kpi('客户 / 复购', c.customers + ' / ' + c.repeat, '复购=下单≥2次', '🔄', '#f59e0b') +
       kpi(periodLabel + '订单数', c.winOrders, '考核期内接单数', '📦', '#0ea5e9') +
-      kpi('活跃设计师', c.designers, '在岗人数', '👥', '#8b5cf6') +
-      kpi('客户 / 复购', c.customers + ' / ' + c.repeat, '复购=下单≥2次', '🔄', '#f59e0b');
+      kpi(periodLabel + '应收', '¥' + money(c.totalRevenue), '考核期内应收合计', '💰', '#22c55e') +
+      kpi('活跃设计师', c.designers, '在岗人数', '👥', '#8b5cf6');
 
     // 应用 KPI 主题色
     $$('#kpiGrid .kpi[data-accent]').forEach(el => {
