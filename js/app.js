@@ -79,12 +79,31 @@
     if (hours >= 1) return hours.toFixed(1) + ' 小时';
     return Math.round(hours * 60) + ' 分钟';
   }
+  // 颜色工具：十六进制与指定色按比例混合（用于生成浅底/深字）
+  function mixHex(hex, withHex, ratio) {
+    const h = hex.replace('#', ''), w = withHex.replace('#', '');
+    const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+    const m = parseInt(w.length === 3 ? w.split('').map(c => c + c).join('') : w, 16);
+    const r1 = (n >> 16) & 255, g1 = (n >> 8) & 255, b1 = n & 255;
+    const r2 = (m >> 16) & 255, g2 = (m >> 8) & 255, b2 = m & 255;
+    const mix = (a, b) => Math.round(a + (b - a) * ratio);
+    return '#' + [mix(r1, r2), mix(g1, g2), mix(b1, b2)].map(x => x.toString(16).padStart(2, '0')).join('');
+  }
+  // 实心标签：深底 + 自动字色。浅色底（黄/橙/浅灰）用深色字，深色底用白字，保证可读性
+  function softBadge(color, text, extraClass) {
+    const c = (color || '#64748b').replace('#', '');
+    const n = parseInt(c.length === 3 ? c.split('').map(x => x + x).join('') : c, 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const L = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; // 相对亮度
+    const fg = L > 0.6 ? '#1f2937' : '#ffffff';
+    return '<span class="' + (extraClass || 'pill') + '" style="background:#' + c + ';color:' + fg + '">' + text + '</span>';
+  }
   function pill(status) {
     const cfg = window.Cfg.STATUS[status] || {};
     const c = cfg.color || '#64748b';
-    return '<span class="pill" style="background:' + c + '">' + esc(cfg.label || status) + '</span>';
+    return softBadge(c, esc(cfg.label || status));
   }
-  function catPill(cat) { return '<span class="pill cat-' + cat + '">' + cat + '</span>'; }
+  function catPill(cat) { return '<span class="cat-pill cat-' + cat + '">' + cat + '</span>'; }
   // 手机端「每页 N 条」下拉浮层：避免 <select> 被 overflow:hidden 父容器截断
   // 浮层用 position:fixed 脱离文档流，根据按钮位置自动向上/向下弹出
   function showPageSizePicker(opts) {
@@ -2315,7 +2334,7 @@
       kpi('总接单量', c.orders, '全部订单累计', '📋', '#6366f1') +
       kpi('客户 / 复购', c.customers + ' / ' + c.repeat, '复购=下单≥2次', '🔄', '#f59e0b') +
       kpi(periodLabel + '订单数', c.winOrders, '考核期内接单数', '📦', '#0ea5e9') +
-      kpi(periodLabel + '应收', '¥' + money(c.totalRevenue), '考核期内应收合计', '💰', '#22c55e') +
+      kpi(periodLabel + '应收', '¥' + money(c.totalRevenue), '考核期内应收合计', '💰', '#f59e0b') +
       kpi('活跃设计师', c.designers, '在岗人数', '👥', '#8b5cf6');
 
     // 应用 KPI 主题色
@@ -2365,20 +2384,21 @@
       title: '定稿率 / 完成率', horizontal: false,
       labels: names,
       datasets: [
-        { label: '定稿率(%)', data: ds.map(d => Math.round(d.rate * 1000) / 10), color: '#0ea5e9' },
+        { label: '定稿率(%)', data: ds.map(d => Math.round(d.rate * 1000) / 10), color: '#06b6d4' },
         { label: '完成率(%)', data: ds.map(d => Math.round(d.completion * 1000) / 10), color: '#f59e0b' }
       ]
     });
     // 窗口内分布（随本期/上期切换）
     const swd = sum.statusDistWin, swk = Object.keys(swd);
-    Charts.doughnut($('#chartStatusWin'), { title: '订单状态分布（' + periodLabel + '窗口）', labels: swk, values: swk.map(k => swd[k]) });
+    const TYPE_COLOR = { '小单': '#64748b', '普通': '#0ea5e9', '大单': '#8b5cf6' };
+    Charts.doughnut($('#chartStatusWin'), { title: '订单状态分布（' + periodLabel + '窗口）', labels: swk, values: swk.map(k => swd[k]), colors: swk.map(k => (window.Cfg.STATUS[k] || {}).color || '#64748b') });
     const twd = sum.typeDistWin, twk = Object.keys(twd);
-    Charts.doughnut($('#chartTypeWin'), { title: '订单类型分布（' + periodLabel + '窗口）', labels: twk, values: twk.map(k => twd[k]) });
+    Charts.doughnut($('#chartTypeWin'), { title: '订单类型分布（' + periodLabel + '窗口）', labels: twk, values: twk.map(k => twd[k]), colors: twk.map(k => TYPE_COLOR[k] || '#64748b') });
     // 全部累计分布（不随窗口切换）
     const sd = sum.statusDist, sk = Object.keys(sd);
-    Charts.doughnut($('#chartStatus'), { title: '订单状态分布（全部累计）', labels: sk, values: sk.map(k => sd[k]) });
+    Charts.doughnut($('#chartStatus'), { title: '订单状态分布（全部累计）', labels: sk, values: sk.map(k => sd[k]), colors: sk.map(k => (window.Cfg.STATUS[k] || {}).color || '#64748b') });
     const td = sum.typeDist, tk = Object.keys(td);
-    Charts.doughnut($('#chartType'), { title: '订单类型分布（全部累计）', labels: tk, values: tk.map(k => td[k]) });
+    Charts.doughnut($('#chartType'), { title: '订单类型分布（全部累计）', labels: tk, values: tk.map(k => td[k]), colors: tk.map(k => TYPE_COLOR[k] || '#64748b') });
 
     // 速览表
     $('#dashPerfTable').innerHTML =
@@ -2460,7 +2480,7 @@
       const cat = window.Cfg.orderCategory(Number(o.amount) || 0, state._settings);
       const collabNames = (Array.isArray(o.collab_designer_ids) ? o.collab_designer_ids : [])
         .map(id => dsMap[id]).filter(Boolean);
-      const designerCell = (esc(dsMap[o.assigned_designer_id]) || '<span style="color:var(--muted)">未派</span>') +
+      const designerCell = (esc(dsMap[o.assigned_designer_id]) || softBadge('#64748b', '未派')) +
         (collabNames.length ? ' <span class="collab-tag">+' + collabNames.map(esc).join('/') + '</span>' : '');
       const reworkCell = o.rework_category
         ? ' <span class="badge ' + (o.rework_category === '设计原因' ? 'bad' : 'warn') + '">' + esc(o.rework_category) + '</span>' : '';
@@ -2475,7 +2495,7 @@
         '<td class="center">' + pill(o.status) + '</td>' +
         '<td>' + fmtDeadline(o.deadline) + '</td>' +
         '<td class="center">' + riskBadge(o) + '</td>' +
-        '<td class="center"><button class="btn sm" data-act="open" data-id="' + o.id + '">流程/详情</button> ' +
+        '<td class="center"><button class="btn sm secondary" data-act="open" data-id="' + o.id + '">流程/详情</button> ' +
         '<button class="btn sm danger" data-act="del" data-id="' + o.id + '" data-perm="orders_delete">删除</button></td>' +
         '</tr>';
     }).join('');
@@ -3046,8 +3066,8 @@
         '<button class="btn warn" data-flow="revise">需要修改</button>';
     } else if (o.status === '修改中') flow = '<button class="btn ok" data-flow="finalize">客户定稿</button>' +
       '<button class="btn danger" data-flow="switch">换人</button>';
-    else if (o.status === '已定稿') flow = '<span class="pill cat-小单">已完成定稿</span>';
-    else if (o.status === '已换人') flow = '<span class="pill">已更换设计师</span>';
+    else if (o.status === '已定稿') flow = softBadge((window.Cfg.STATUS['已定稿'] || {}).color || '#15803d', '已完成定稿');
+    else if (o.status === '已换人') flow = softBadge('#94a3b8', '已更换设计师');
     // 流程回退（按 flow_revert 权限开放）：误推进一步时可撤销（接单为最初状态不显示）
     // 终态（已定稿/已换人）下回退按钮用低调文字链接，避免与完成标签视觉冲突
     if (can('flow_revert') && canRevert(o.status)) {
@@ -3081,7 +3101,7 @@
             <div class="field oi-type"><label>任务类型</label><select id="oType"${dType}>${window.Cfg.TASK_TYPES.map(t => '<option' + (t === o.task_type ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
             <div class="field oi-customer customer-combo"><label>客户</label><div class="combo-input-wrap"><input type="hidden" id="oCustomer" value="${esc(o.customer_id || '')}"><input type="text" id="oCustomerText" value="${esc(customerText)}" placeholder="输入客户名，未找到则自动新建" autocomplete="off"${dCustomer}><button type="button" class="combo-arrow" id="oCustomerArrow" title="选择客户" tabindex="-1"${dCustomer}>▼</button></div><div class="customer-suggest" id="oCustomerSuggest" style="display:none"></div></div>
             <div class="field oi-amount"><label>金额（元）</label><input id="oAmount" type="number" value="${o.amount || 0}" placeholder="元"${dAmount}></div>
-            <div class="field oi-status"><label>状态</label><div class="ro-box"><span class="status-badge" style="background:${(window.Cfg.STATUS[o.status] || {}).color || '#64748b'}">${esc((window.Cfg.STATUS[o.status] || {}).detail || o.status)}</span></div></div>
+            <div class="field oi-status"><label>状态</label><div class="ro-box">${softBadge((window.Cfg.STATUS[o.status] || {}).color || '#64748b', esc((window.Cfg.STATUS[o.status] || {}).detail || o.status), 'status-badge')}</div></div>
           </div>
           <div class="field cust-info-line" id="oCustInfo" style="margin-top:4px"><div class="cust-meta">${customerInfoHtml(cs, o.customer_id, true)}</div></div>
           <div id="oNewCustomer" class="card light" style="display:none;margin:8px 0 0;padding:10px">
@@ -4122,12 +4142,12 @@
         '<div class="label">' + esc(label) + '</div>' +
       '</div>';
     let kpisHtml =
-      mk('📋', dispatchCount, '派单量', '#8b5cf6') +
+      mk('📋', dispatchCount, '派单量', '#0ea5e9') +
       mk('📊', pct(finalizeRate), '定稿率', '#06b6d4') +
       mk('🎯', pct(firstProposalPassRate), '提案通过率', '#f59e0b') +
-      mk('🎨', pct(draftToFinalizeRate), '初稿定稿率', '#ec4899') +
+      mk('🎨', pct(draftToFinalizeRate), '初稿定稿率', '#4f46e5') +
       mk('⏱', avgCycle ? fmtCycle(avgCycle) : '—', '平均定稿时间', '#14b8a6') +
-      mk('💰', '¥' + money(revenue), '个人营收', '#22c55e');
+      mk('💰', '¥' + money(revenue), '个人营收', '#f59e0b');
     // 返工率 > 0 时才显示（零值不占空间）
     if (reworkRate > 0) kpisHtml += mk('⚠️', pct(reworkRate), '设计返工率', '#ef4444');
     $('#workbenchKpis').innerHTML = kpisHtml;
@@ -4395,7 +4415,7 @@
         '<circle class="wb-ring-bg" cx="22" cy="22" r="19"></circle>' +
         '<circle class="wb-ring-fg" cx="22" cy="22" r="19" pathLength="100" style="stroke:' + ringColorVal + ';stroke-dasharray:' + progress + ' ' + (100 - progress) + '"></circle>' +
         '</svg><div class="wb-ring-txt">' + progress + '%</div></div>';
-    const statusPill = '<span class="pill" style="background:' + ((window.Cfg.STATUS[o.status] || {}).color || '#64748b') + '">' + esc((window.Cfg.STATUS[o.status] || {}).label || o.status) + '</span>';
+    const statusPill = softBadge((window.Cfg.STATUS[o.status] || {}).color || '#64748b', esc((window.Cfg.STATUS[o.status] || {}).label || o.status));
     const done = (o.status === '已定稿' || o.status === '已换人');
     const finishTime = done ? (o.finalized_at || o.switched_at) : null;
     const nextHint = done
@@ -4459,7 +4479,7 @@
     const dl = deadlineInfo(o);
     const color = ringColor(o, progress, dl);
     const statusCfg = window.Cfg.STATUS[o.status] || {};
-    const statusPill = '<span class="pill" style="background:' + (statusCfg.color || '#64748b') + '">' + esc(statusCfg.label || o.status) + '</span>';
+    const statusPill = softBadge(statusCfg.color || '#64748b', esc(statusCfg.label || o.status));
     const sameAsTitle = (o.customer_name || '').trim() === (o.title || '').trim();
     const clientPart = sameAsTitle ? '' : esc(o.customer_name || '—') + ' · ';
     return `
@@ -4930,7 +4950,7 @@
           '<td class="num">¥' + money(amt) + '</td><td class="num">' + co.length + '</td>' +
           '<td>' + (lastTs ? fmtTime(lastTs).slice(0, 10) : '—') + '</td>' +
           '<td>' + (repeat ? '复购' : '新客') + '</td>' +
-          '<td><button class="btn sm" data-view="' + c.id + '">详情</button> ' +
+          '<td><button class="btn sm secondary" data-view="' + c.id + '">详情</button> ' +
           '<button class="btn sm danger" data-cdel="' + c.id + '" data-perm="customers_delete">删除</button></td></tr>';
       }).join('') : '<tr><td colspan="9" class="empty">暂无客户，点击“新建客户”</td></tr>') + '</tbody>';
     // 使用事件委托绑定操作列按钮与表头排序，避免 innerHTML 重绘后事件丢失
@@ -5247,12 +5267,36 @@
     await renderDesignerAdmin();
     renderPermConfig();
     fillLogDesigners();
-    if (can('view_logs')) { try { await renderOpLogs(); } catch (e) { console.warn('初始加载操作日志失败', e); } }
+    // 操作日志改为懒加载：默认折叠，仅当日志卡片已展开时才查询（首次展开由折叠交互触发），避免进设置页就拉一长串日志
+    const logCard = document.querySelector('#tab-settings .card[data-perm="view_logs"]');
+    if (can('view_logs') && logCard && logCard.classList.contains('open')) {
+      try { await renderOpLogs(); } catch (e) { console.warn('初始加载操作日志失败', e); }
+    }
     renderRecycleBin();   // 不 await：回收站需查询已删记录
     renderLoginSecurity(); // 不 await：仅管理员查询被锁账号
     renderAbout();   // 不 await：读版本要发一次网络请求，不该拖慢设置页渲染
     updateLastBackupHint();
     applyPermissions();
+    bindSettingsCollapse(); // 折叠交互只绑一次
+  }
+  // 设置页可折叠卡片（权限配置 / 操作日志）：点标题展开/收起；操作日志首次展开时才查询
+  let _settingsCollapseBound = false;
+  function bindSettingsCollapse() {
+    if (_settingsCollapseBound) return;
+    const sec = $('#tab-settings');
+    if (!sec) return;
+    sec.addEventListener('click', e => {
+      const h = e.target.closest('.card-toggle');
+      if (!h) return;
+      const card = h.closest('.card');
+      const willOpen = !card.classList.contains('open');
+      card.classList.toggle('open');
+      if (willOpen && card.dataset.perm === 'view_logs' && !card.dataset.logsLoaded) {
+        card.dataset.logsLoaded = '1';
+        renderOpLogs();
+      }
+    });
+    _settingsCollapseBound = true;
   }
   // 「设置 → 回收站」：列出已软删除的订单/客户，可还原或彻底删除。
   // 入口仅对具备 orders_delete / customers_delete 权限的人可见（管理员/店长）。
@@ -5498,18 +5542,18 @@
       '</div>';
     $('#kpiAna').innerHTML =
       kpi('总接单量', t.intakeCount, '范围内接单总数', '📋', '#6366f1') +
-      kpi('规定时间总营收', '¥' + money(t.revenue), '范围内全部单子', '💰', '#22c55e') +
+      kpi('规定时间总营收', '¥' + money(t.revenue), '范围内全部单子', '💰', '#f59e0b') +
       kpi('客户投诉笔数', t.complaints, '范围内投诉合计', '⚠️', '#ef4444') +
       kpi('派单订单数', t.dispatchOrders, '范围内派发（唯一单）', '📦', '#0ea5e9') +
       kpi('平均定稿时间', t.avgCycleTeam ? fmtCycle(t.avgCycleTeam) : '—', '派单→定稿均值', '⏱', '#14b8a6') +
       kpi('提案通过率', pct(t.proposalPassRate), '提案通过 ÷ 已决提案', '🎯', '#f59e0b') +
-      kpi('一次提案通过率', pct(t.firstProposalPassRate), '首次提案一次过 ÷ 已决提案', '🎯', '#a855f7') +
-      kpi('初稿定稿率', pct(t.draftToFinalizeRate), '已定稿且修改 0 次', '🎨', '#ec4899') +
-      kpi('定稿率', pct(finalizeRateTeam), '定稿 ÷ 派单总数', '✅', '#22c55e') +
-      kpi('设计返工率', pct(t.reworkRate), '设计责任返工 ÷ 已定稿', '🔴', '#ef4444') +
+      kpi('一次提案通过率', pct(t.firstProposalPassRate), '首次提案一次过 ÷ 已决提案', '🎯', '#8b5cf6') +
+      kpi('初稿定稿率', pct(t.draftToFinalizeRate), '已定稿且修改 0 次', '🎨', '#4f46e5') +
+      kpi('定稿率', pct(finalizeRateTeam), '定稿 ÷ 派单总数', '✅', '#06b6d4') +
+      kpi('设计返工率', pct(t.reworkRate), '设计责任返工 ÷ 已定稿', '🔴', '#f97316') +
       kpi('当前在制', t.currentInProgress, '全组实时未结案', '⚡', '#3b82f6') +
-      kpi('峰值并发(单人最高)', t.peakConcurrency, '范围内单人同时最多', '📈', '#8b5cf6') +
-      kpi('小单达标', sm.smallOkCount + '/' + sm.designerCount + ' 人', '≥' + sm.target + '单/人 · 人均' + sm.avgSmallTeam, '🏆', '#f59e0b');
+      kpi('峰值并发(单人最高)', t.peakConcurrency, '范围内单人同时最多', '📈', '#64748b') +
+      kpi('小单达标', sm.smallOkCount + '/' + sm.designerCount + ' 人', '≥' + sm.target + '单/人 · 人均' + sm.avgSmallTeam, '🏆', '#eab308');
 
     // 应用 KPI 主题色
     $$('#kpiAna .kpi[data-accent]').forEach(el => {
@@ -5527,13 +5571,13 @@
     Charts.bar($('#chartDispatch'), {
       title: '每位设计师派单量（含协同，各计 1 单）', horizontal: true,
       labels: names,
-      datasets: [{ label: '派单量', data: rows.map(r => r.dispatchCount), color: '#4f46e5' }]
+      datasets: [{ label: '派单量', data: rows.map(r => r.dispatchCount), color: '#0ea5e9' }]
     });
     Charts.bar($('#chartConcurrency'), {
       title: '并发：当前在制 vs 窗口峰值', horizontal: true,
       labels: names,
       datasets: [
-        { label: '当前在制', data: rows.map(r => r.currentLoad), color: '#0ea5e9' },
+        { label: '当前在制', data: rows.map(r => r.currentLoad), color: '#3b82f6' },
         { label: '窗口峰值', data: rows.map(r => r.peakLoad), color: '#ef4444' }
       ]
     });
@@ -5541,15 +5585,15 @@
       title: '提案通过率 / 一次提案通过率 / 初稿定稿率(%)', horizontal: false,
       labels: names,
       datasets: [
-        { label: '提案通过率(%)', data: rows.map(r => Math.round(r.proposalPassRate * 1000) / 10), color: '#22c55e' },
+        { label: '提案通过率(%)', data: rows.map(r => Math.round(r.proposalPassRate * 1000) / 10), color: '#f59e0b' },
         { label: '一次提案通过率(%)', data: rows.map(r => Math.round(r.firstProposalPassRate * 1000) / 10), color: '#8b5cf6' },
-        { label: '初稿定稿率(%)', data: rows.map(r => Math.round(r.draftToFinalizeRate * 1000) / 10), color: '#f59e0b' }
+        { label: '初稿定稿率(%)', data: rows.map(r => Math.round(r.draftToFinalizeRate * 1000) / 10), color: '#4f46e5' }
       ]
     });
     Charts.bar($('#chartRework'), {
       title: '设计返工率(%)（设计责任 ÷ 已定稿）', horizontal: false,
       labels: names,
-      datasets: [{ label: '设计返工率(%)', data: rows.map(r => Math.round(r.reworkRate * 1000) / 10), color: '#f59e0b' }]
+      datasets: [{ label: '设计返工率(%)', data: rows.map(r => Math.round(r.reworkRate * 1000) / 10), color: '#f97316' }]
     });
 
     // 设计师明细表（运营指标 + 工资核算，与绩效月报同源）
@@ -5600,7 +5644,7 @@
 
   // 设计师每日未完工并发曲线（按所选月份）
   const CONCURRENCY_PALETTE = ['#4f46e5', '#0ea5e9', '#22c55e', '#f59e0b',
-    '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6', '#64748b', '#a855f7'];
+    '#8b5cf6', '#ef4444', '#14b8a6', '#64748b', '#06b6d4', '#f97316'];
   async function renderConcurrencyDaily() {
     const elMonth = $('#anaMonth');
     if (!elMonth.value) {

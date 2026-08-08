@@ -103,14 +103,14 @@ window.Cfg = (function () {
   const FLOW = ['接单', '派单', '提案', '提案不通过', '设计中', '初稿', '客户反馈', '修改中', '已定稿', '已换人'];
   const STATUS = {
     '接单':     { label: '接单',       color: '#64748b', detail: '已接单，等待派单' },
-    '派单':     { label: '派单',       color: '#0ea5e9', detail: '已派单，设计中' },
+    '派单':     { label: '派单',       color: '#4f46e5', detail: '已派单，设计中' },
     '设计中':   { label: '设计中',     color: '#8b5cf6', detail: '设计师制作中' },
     '初稿':     { label: '初稿待审',   color: '#f59e0b', detail: '初稿已出，等待客户确认' },
-    '提案':     { label: '提案中',     color: '#06b6d4', detail: '等待提案评审' },
+    '提案':     { label: '提案中',     color: '#fb923c', detail: '等待客户提案确认' },
     '提案不通过': { label: '提案不通过', color: '#f97316', detail: '提案未通过，需调整' },
-    '客户反馈': { label: '等客户反馈',   color: '#ec4899', detail: '等客户反馈意见' },
-    '修改中':   { label: '修改中',     color: '#ef4444', detail: '修改中（按反馈调整）' },
-    '已定稿':   { label: '已定稿',     color: '#22c55e', detail: '已定稿完成' },
+    '客户反馈': { label: '等客户反馈',   color: '#fbbf24', detail: '等客户反馈意见' },
+    '修改中':   { label: '修改中',     color: '#dc2626', detail: '修改中（客户不满意，反复返工）' },
+    '已定稿':   { label: '已定稿',     color: '#15803d', detail: '已定稿完成' },
     '已换人':   { label: '已换人',     color: '#94a3b8', detail: '已更换设计师' }
   };
 

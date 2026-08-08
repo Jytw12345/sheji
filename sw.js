@@ -5,7 +5,7 @@
  *  - 跨域 CDN（Supabase / Chart.js / xlsx）：stale-while-revalidate
  * 注意：所有预缓存路径使用相对路径，自动适配 GitHub Pages 子路径部署。
  */
-const CACHE = 'dw-pwa-v352';
+const CACHE = 'dw-pwa-v367';
 
 /* 版本参数说明（两套，互相独立）
  *  APPV —— 自研代码（js/*.js、css/styles.css）。每次改前端代码发版都要 +1，
@@ -16,7 +16,7 @@ const CACHE = 'dw-pwa-v352';
  * PRECACHE 里的 URL 必须与 index.html 中的请求 URL 逐字一致，
  * 否则同一个文件会被下载两次（一次 SW 预缓存、一次页面请求），且缓存 key 对不上。
  */
-const APPV = 'v352';
+const APPV = 'v367';
 const LIBV = 'lib1';
 
 const PRECACHE = [

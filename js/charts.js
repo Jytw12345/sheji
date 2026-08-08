@@ -4,8 +4,8 @@
  * 提供：Charts.bar / Charts.doughnut / Charts.line / Charts.hasLib
  * ============================================================ */
 window.Charts = (function () {
-  const PALETTE = ['#4f46e5', '#0ea5e9', '#22c55e', '#f59e0b', '#ec4899',
-                   '#8b5cf6', '#ef4444', '#14b8a6', '#64748b', '#a855f7'];
+  const PALETTE = ['#4f46e5', '#0ea5e9', '#22c55e', '#f59e0b', '#8b5cf6',
+                   '#ef4444', '#14b8a6', '#64748b', '#06b6d4', '#f97316'];
   // 文字/网格颜色随系统主题切换：浅色背景用深色字，深色背景用浅色字
   function isDark() {
     return typeof window !== 'undefined' &&

@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v352" />
+  <link rel="stylesheet" href="css/styles.css?v367" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -106,7 +106,7 @@
       <div class="page-head">
         <div><h2>订单管理</h2></div>
         <div class="row">
-          <button class="btn" id="btnNewOrder" data-perm="orders_create">+ 新建订单</button>
+          <button class="btn new-entity-btn" id="btnNewOrder" data-perm="orders_create">+ 新建订单</button>
         </div>
       </div>
       <div class="card">
@@ -207,7 +207,7 @@
     <section id="tab-customers">
       <div class="page-head">
         <div><h2>客户管理</h2><div class="sub desktop-only">下单≥2次自动标记为复购客户</div></div>
-        <button class="btn" id="btnNewCustomer" data-perm="customers_create">+ 新建客户</button>
+        <button class="btn new-entity-btn" id="btnNewCustomer" data-perm="customers_create">+ 新建客户</button>
       </div>
       <div class="card">
         <div class="toolbar">
@@ -326,7 +326,7 @@
         </div>
       </div>
       <div class="card" data-perm="manage_designers">
-        <h3>人员与分组管理</h3>
+        <h3>人员管理</h3>
         <div class="sub" style="color:var(--muted);margin-bottom:12px">新增/删除人员与分组；人员在岗状态请在列表中管理。</div>
         <div>
           <h4 style="margin:0 0 10px">人员列表</h4>
@@ -354,15 +354,15 @@
             </div>
           </div>
         </div>
-        <hr style="border:none;border-top:1px solid var(--line);margin:24px 0">
-        <div>
-          <h4 style="margin:0 0 10px">分组管理</h4>
-          <div class="group-cards" id="settingsGroupsCards"></div>
-          <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
-          <div class="row">
-            <div class="field" style="flex:2"><label>新分组名称</label><input id="gName" placeholder="如：平面组" /></div>
-            <button class="btn" id="btnAddGroup" style="align-self:flex-end;margin-bottom:0">添加</button>
-          </div>
+      <!-- 分组管理独立成卡，与人员管理层级更清晰 -->
+      <div class="card" data-perm="manage_designers">
+        <h3>分组管理</h3>
+        <div class="sub" style="color:var(--muted);margin-bottom:12px">新建/删除分组，并维护分组成员。</div>
+        <div class="group-cards" id="settingsGroupsCards"></div>
+        <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+        <div class="row">
+          <div class="field" style="flex:2"><label>新分组名称</label><input id="gName" placeholder="如：平面组" /></div>
+          <button class="btn" id="btnAddGroup" style="align-self:flex-end;margin-bottom:0">添加</button>
         </div>
 
         <!-- 分组成员编辑抽屉 -->
@@ -386,6 +386,7 @@
           </div>
         </div>
       </div>
+      </div>
 
       <div class="card" data-perm="manage_data">
         <h3>数据管理</h3>
@@ -407,14 +408,17 @@
         <div id="loginSecList" class="table-scroll"></div>
       </div>
 
-      <div class="card" data-perm="manage_permissions">
-        <h3>权限配置 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员）</span></h3>
+      <div class="card collapsible" data-perm="manage_permissions">
+        <h3 class="card-toggle">权限配置 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员）</span></h3>
+        <div class="card-collapse">
         <p class="sub" style="color:var(--muted);margin-bottom:10px">为「管理员 / 店长 / 设计师」三个职务设置各菜单与按钮的默认显隐，并可对单个设计师做个性化覆盖。修改即时生效。</p>
         <div id="permConfigBox"></div>
+        </div>
       </div>
 
-      <div class="card" data-perm="view_logs">
-        <h3>操作日志</h3>
+      <div class="card collapsible" data-perm="view_logs">
+        <h3 class="card-toggle">操作日志</h3>
+        <div class="card-collapse">
         <p class="sub" style="color:var(--muted);margin-bottom:12px">记录登录、订单/客户增删改、流程推进与回退、参数保存、人员管理、密码修改等人员操作。管理员/店长可查看全部；设计师仅可见本人操作。</p>
         <div class="log-filters">
           <div class="field log-filter-field log-filter-half"><label>人员</label><select id="logDesigner" class="log-filter-select"><option value="">全部</option></select></div>
@@ -444,6 +448,7 @@
         </div>
         <div class="sub" style="color:var(--muted);margin:8px 0">最多显示最近 300 条，按时间倒序。</div>
         <div class="table-scroll"><table class="tbl" id="logTable"></table></div>
+        </div>
       </div>
       <!-- 关于：显示当前运行的资源版本（读自 sw.js 的 CACHE 常量），并可手动检查更新。
            原先是右下角常驻浮层，对所有人可见；移到此处后受 menu_settings 权限保护。 -->
@@ -471,12 +476,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v352"></script>
-  <script defer src="js/db.js?v352"></script>
-  <script defer src="js/calc.js?v352"></script>
-  <script defer src="js/charts.js?v352"></script>
-  <script defer src="js/export.js?v352"></script>
-  <script defer src="js/app.js?v352"></script>
+  <script defer src="js/config.js?v367"></script>
+  <script defer src="js/db.js?v367"></script>
+  <script defer src="js/calc.js?v367"></script>
+  <script defer src="js/charts.js?v367"></script>
+  <script defer src="js/export.js?v367"></script>
+  <script defer src="js/app.js?v367"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）
