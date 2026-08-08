@@ -120,6 +120,7 @@ html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100vw; }
 body > * { max-width: 100%; overflow-x: hidden; }
 main { overflow-x: visible; }
 body {
+  min-height: 100vh;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -234,6 +235,25 @@ a { color: var(--primary); }
 main { padding: 18px; max-width: 1280px; margin: 0 auto; }
 section { display: none; }
 section.active { display: block; animation: fade .25s; }
+/* 桌面端：订单/客户页占满视口，内部表格滚动，分页/按钮常驻底部 */
+@media (min-width: 761px) {
+  #tab-orders.active, #tab-customers.active {
+    display: flex; flex-direction: column;
+    height: calc(100vh - 140px);
+    overflow: hidden;
+  }
+  #tab-orders.active > .card, #tab-customers.active > .card {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; flex-direction: column;
+    overflow: hidden; margin-bottom: 0;
+  }
+  #tab-orders.active .toolbar, #tab-customers.active .toolbar { flex: 0 0 auto; }
+  #tab-orders.active .risk-filter-bar { flex: 0 0 auto; }
+  #tab-orders.active .orders-scroll, #tab-customers.active .customers-scroll {
+    flex: 1 1 auto; min-height: 0; overflow: auto; max-height: none;
+  }
+  #tab-orders.active .pager, #tab-customers.active .pager { flex: 0 0 auto; }
+}
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
 .page-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .page-head-left { display: flex; flex-direction: column; gap: 10px; }
@@ -493,10 +513,15 @@ section.active { display: block; animation: fade .25s; }
 /* 订单列表分页控件 */
 .pager { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 2px; }
 .pager-info { color: var(--muted); font-size: 13px; margin-right: auto; }
+/* 客户页「每页 N 条」自定义下拉 */
+.ps-wrap { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; white-space: nowrap; flex-shrink: 0; margin-left: 12px; }
+.ps-wrap .mini-select { margin: 0; }
+@media (max-width: 760px) { .ps-wrap { margin-left: 8px; font-size: 12px; } }
 .pager .btn[disabled] { opacity: .45; cursor: not-allowed; }
 @media (max-width: 480px) {
-  .pager { justify-content: center; }
-  .pager-info { width: 100%; text-align: center; margin: 0 0 4px; }
+  .pager { justify-content: center; gap: 4px; padding: 8px 2px; }
+  .pager-info { width: 100%; text-align: center; margin: 0 0 4px; font-size: 12px; }
+  .pager .btn { min-width: 0; min-height: 28px; padding: 4px 8px; font-size: 12px; }
 }
 
 /* ---------- 自定义下拉（替换原生 select） ---------- */
@@ -529,6 +554,43 @@ section.active { display: block; animation: fade .25s; }
 .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; }
 .cat-小单 { background: #22c55e; } .cat-普通 { background: #0ea5e9; } .cat-大单 { background: #8b5cf6; }
 .repeat-tag { background: #f59e0b; color:#fff; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+/* 订单字段锁定（按流程节点分字段，非一刀切） */
+.lock-note { margin: 0 0 12px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.55; background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; }
+/* 订单字段锁定：禁用态彻底屏蔽交互，避免 disabled 被运行时覆盖 */
+.locked, input.locked, select.locked, textarea.locked {
+  opacity: .65; cursor: not-allowed !important; background: #f1f5f9 !important;
+  pointer-events: none !important; user-select: none !important;
+  -webkit-user-select: none !important; touch-action: none !important;
+}
+select.locked {
+  appearance: none !important; -webkit-appearance: none !important;
+  padding-right: 10px !important;
+}
+button.locked, .chip.locked { opacity: .5; cursor: not-allowed; pointer-events: none; }
+/* 客户全景视图（viewCustomer 增强）：分层标签 + 指标卡 + 投诉区 */
+.cust-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.cust-head h3 { margin: 0; font-size: 17px; }
+.cust-seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg-tag { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.seg-key { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+.seg-new { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.seg-dorm { background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }
+.seg-normal { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+.cust-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 8px 0 14px; }
+.cust-metrics .cm { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 8px; text-align: center; }
+.cust-metrics .cm-val { font-size: 16px; font-weight: 800; color: var(--text); line-height: 1.2; word-break: break-word; }
+.cust-metrics .cm-label { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.cust-complaints { margin: 6px 0 4px; }
+.cust-comp-empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+.cust-comp-list { display: flex; flex-direction: column; gap: 8px; }
+.cust-comp-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); }
+.cust-comp-top { display: flex; align-items: center; gap: 8px; }
+.cust-comp-order { font-size: 12px; margin-top: 3px; }
+.cust-comp-note { font-size: 13px; margin-top: 4px; color: var(--text); }
+@media (max-width: 560px) {
+  .cust-metrics { grid-template-columns: repeat(2, 1fr); }
+  .cust-head h3 { font-size: 16px; }
+}
 
 /* ---------- 表单 / 控件 ---------- */
 /* 工具栏：桌面端一行横排（关键字+下拉+按钮）、控件尺寸统一 */
@@ -948,10 +1010,15 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
   #customersTable th:nth-child(8) { width: 9%; }  /* 最近下单 */
   #customersTable th:nth-child(9) { width: 16%; text-align: center; }  /* 操作：加宽让两个按钮水平排列 */
   #customersTable td:nth-child(9) { white-space: nowrap; line-height: 1.2; }  /* 详情/删除按钮水平排列，避免撑高行 */
-  /* 订单表格移动端优化：确保操作列按钮可点击 */
+  /* 订单表格移动端优化：压缩行高，避免操作按钮撑高整行 */
   #ordersTable { min-width: 900px; }
-  #ordersTable .btn.sm { min-width: 48px; padding: 8px 10px; font-size: 12.5px; }
-  #ordersTable .btn.danger { margin-left: 4px; }  /* 删除按钮与详情按钮间距 */
+  #ordersTable th, #ordersTable td { padding: 4px 5px; line-height: 1.25; }
+  #ordersTable .btn, #ordersTable .btn.sm {
+    min-width: 32px; min-height: 26px; padding: 2px 5px; font-size: 11px; border-radius: 4px;
+  }
+  #ordersTable .btn.danger { margin-left: 3px; }  /* 删除按钮与详情按钮间距 */
+  /* 客户列表滚动容器：移动端扣减底部导航 + 顶部区域，保证分页按钮可见 */
+  .customers-scroll { max-height: calc(100vh - 230px); }
   /* 确保表格内按钮在移动端有正确的堆叠顺序和触摸响应 */
   .table-scroll { -webkit-overflow-scrolling: touch; }  /* iOS 惯性滚动 */
   .tbl .btn { position: relative; z-index: 1; }  /* 防止被遮挡 */
@@ -962,8 +1029,25 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
   .toolbar { flex-direction: column; gap: 8px; }
   .toolbar-main { gap: 8px; flex-direction: column; }
   /* toolbar-top 始终一行（搜索框 + 筛选按钮） */
-  .toolbar-top { width: 100%; }
+  .toolbar-top { width: 100%; gap: 6px; align-items: flex-end; }
+  .toolbar-top > .field { flex: 1 1 auto; min-width: 0; }
+  .toolbar-top > .field.cust-type-field { flex: 0 0 92px; }
+  .toolbar-top > .field label { display: none; }              /* 移动端隐藏标签，靠 placeholder 说明 */
+  .toolbar-top > .field input,
+  .toolbar-top > .field select { height: 34px; padding: 5px 7px; font-size: 13px; }
   .btn-filter-toggle { padding: 8px 12px; font-size: 13px; }
+  /* 客户管理手机端：搜索、类型、每页条数同一行，更紧凑 */
+  #tab-customers .toolbar { gap: 6px; margin-bottom: 8px; }
+  #tab-customers .toolbar-top { align-items: flex-end; }
+  #tab-customers .toolbar-top > .field.cust-type-field { flex: 0 0 78px; }
+  #tab-customers .ps-wrap.cust-ps-wrap {
+    flex: 0 0 auto; margin-left: 0; font-size: 12px; gap: 3px;
+    white-space: nowrap; color: var(--muted);
+  }
+  #tab-customers .ps-wrap.cust-ps-wrap .mini-select {
+    width: 52px; height: 34px; padding: 4px 5px; font-size: 12px;
+  }
+  #tab-customers .page-head { margin-bottom: 8px; }
 
   /* 移动端默认隐藏筛选区（含字段+按钮） */
   .toolbar-filters { display: none !important; }
@@ -1116,21 +1200,26 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
     max-height: 88vh; padding: 16px 14px calc(16px + env(safe-area-inset-bottom, 0px));
     overflow-y: auto; overflow-x: hidden;
   }
-  /* 新建订单截稿时间：移动端紧凑两列布局 */
-  .dl-row {
+  /* 移动端：派单/协作回到分块，截稿日期/时间/快捷两列 */
+  .dispatch-row {
+    display: block !important;
+  }
+  .dispatch-row .dl-des { width: 100% !important; margin-bottom: 8px; }
+  .dispatch-row .collab-field { width: 100% !important; }
+  .dl-row, .deadline-row {
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
     gap: 10px 8px !important;
     align-items: end !important;
   }
   .dl-row > .dl-des { grid-column: 1 / 2; grid-row: 1; }
-  .dl-row > .dl-field { grid-column: 2 / 3; grid-row: 1; }
-  .dl-row > .dl-time  { grid-column: 1 / 2; grid-row: 2; }
+  .dl-row > .dl-field, .deadline-row > .dl-field { grid-column: 1 / 2; grid-row: 1; }
+  .dl-row > .dl-time, .deadline-row > .dl-time  { grid-column: 2 / 3; grid-row: 1; }
   .dl-des, .dl-field, .dl-time { flex: none !important; width: 100% !important; }
   .dl-time-pair { gap: 4px !important; }
   .dl-time-pair select { min-width: 0 !important; padding-left: 4px !important; padding-right: 4px !important; }
-  .dl-row > .dl-presets {
-    grid-column: 2 / 3 !important;
+  .dl-row > .dl-presets, .deadline-row > .dl-presets {
+    grid-column: 1 / 3 !important;
     grid-row: 2 !important;
     align-self: end !important;
     margin-top: 0 !important;
@@ -1554,7 +1643,7 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 */
 .order-info-row {
   display: grid;
-  grid-template-columns: 1fr 130px auto;
+  grid-template-columns: 1fr 110px 110px;
   grid-template-areas:
     "title    type   ."
     "customer amount status";
@@ -1565,9 +1654,22 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .order-info-row .oi-title     { grid-area: title; }
 .order-info-row .oi-type     { grid-area: type; }
 .order-info-row .oi-customer { grid-area: customer; }
-.order-info-row .oi-amount   { grid-area: amount; max-width: 90px; }
+.order-info-row .oi-amount   { grid-area: amount; }
 .order-info-row .oi-status   { grid-area: status; min-width: 0; }
-.order-info-row .oi-status .pill { white-space: normal; line-height: 1.35; text-align: left; text-wrap: balance; }
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  text-align: center;
+  line-height: 1.3;
+}
+.order-info-row .oi-status .status-badge { width: 100%; box-sizing: border-box; }
 .cust-info-line { padding-top: 2px; }
 .cust-info-line .cust-meta { display: inline-flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); }
 .cust-line { color: var(--muted); }
@@ -1593,20 +1695,17 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .order-detail-form > details.info-collapse .form-sec-title { color: var(--ink); }
 .order-detail-form > details.info-collapse .form-sec-title::before { background: var(--line); }
 @media (max-width: 900px) {
-  .order-info-row { grid-template-columns: 1fr 110px auto; gap: 6px; }
-  .order-info-row .oi-amount { max-width: 80px; }
+  .order-info-row { grid-template-columns: 1fr 100px 100px; gap: 6px; }
 }
 @media (max-width: 760px) {
-  .order-info-row { grid-template-columns: 1fr 85px auto; gap: 4px; align-items: start; }
-  .order-info-row .oi-amount { max-width: 62px; }
-  .order-info-row .oi-status { min-width: 0; max-width: 130px; }
+  .order-info-row { grid-template-columns: 1fr 88px 88px; gap: 4px; align-items: start; }
+  .order-info-row .oi-status { min-width: 0; }
   .compact-form input, .compact-form select, .compact-form textarea { padding: 6px 8px; font-size: 13.5px; }
 }
 @media (max-width: 480px) {
-  .order-info-row { grid-template-columns: 1fr 68px auto; gap: 3px; align-items: start; }
-  .order-info-row .oi-amount { max-width: 50px; }
-  .order-info-row .oi-status { min-width: 0; max-width: 110px; overflow: visible; }
-  .order-info-row .oi-status .pill { font-size: 10.5px; padding: 2px 6px; white-space: normal; line-height: 1.4; text-wrap: balance; display: inline-block; }
+  .order-info-row { grid-template-columns: 1fr 74px 74px; gap: 3px; align-items: start; }
+  .order-info-row .oi-status { min-width: 0; }
+  .order-info-row .oi-status .status-badge { min-height: 30px; padding: 4px 6px; font-size: 10.5px; line-height: 1.35; }
   .compact-form input, .compact-form select, .compact-form textarea { padding: 5px 7px; font-size: 13px; }
   .compact-form .field label { font-size: 10.5px; }
   .cust-info-line { margin-top: 2px; }
@@ -1630,11 +1729,21 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .dl-field { flex: 0 0 28%; min-width: 0; }
 .dl-field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .dl-field input, .dl-field select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; font-size: 13px; }
-.dl-presets { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; width: 100%; }
+.dl-presets { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .dl-presets > label { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .dl-presets .chip { padding: 5px 10px; font-size: 12px; }
 /* 截稿时间：小时:分钟 双下拉横排 */
 .dl-time { flex: 1; min-width: 150px; }
+
+/* 派单与协作：桌面端派单设计师 + 协作设计师同一行；截稿日期/时间/快捷同一行 */
+.dispatch-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: nowrap; }
+.dispatch-row .dl-des { flex: 0 0 140px; }
+.dispatch-row .collab-field { flex: 1 1 0; min-width: 0; }
+.dispatch-row .collab-field .chips { flex-wrap: wrap; }
+.deadline-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: nowrap; }
+.deadline-row .dl-field { flex: 0 0 28%; min-width: 0; }
+.deadline-row .dl-time { flex: 0 0 150px; }
+.deadline-row .dl-presets { flex: 1 1 0; margin-top: 0; min-width: 0; }
 .dl-time label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .dl-time-pair { display: flex; align-items: center; gap: 4px; }
 .dl-time-pair select { flex: 1; padding: 7px 6px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; font-size: 13px; min-width: 68px; }
@@ -1990,6 +2099,12 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .orders-scroll thead th {
   position: sticky; top: 0; z-index: 5; background: #f8fafc; cursor: default;
 }
+/* 客户列表滚动容器：固定高度内部滚动，让分页按钮始终留在底部可见 */
+.customers-scroll { max-height: calc(100vh - 260px); overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+.customers-scroll .tbl { margin: 0; }
+.customers-scroll thead th {
+  position: sticky; top: 0; z-index: 5; background: #f8fafc; cursor: default;
+}
 .tbl th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
 .tbl th.sortable:hover { background: #eef2ff; }
 .tbl th.sorted { color: var(--primary); background: #eef2ff; }
@@ -2100,6 +2215,48 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
   /* 完整横向条带：所有可见页并排（flow 位置 = 可见顺序）；track 常驻 translateX 把当前页定位到视口。
      弹窗/日历/吐司均在 #swipeTrack 之外，track 常驻 transform 不会污染其 fixed 定位。 */
   #swipeTrack > section { display: block; animation: none; }
+  /* 客户管理：表格内部滚动、翻页条钉在底部常驻可见（不被底部固定导航遮挡）。
+     整个 section 不再整体滚动，避免翻页条被推到底部导航栏下方。 */
+  #swipeTrack > #tab-customers {
+    display: flex; flex-direction: column;
+    height: 100%; min-height: 0;
+    overflow: hidden;
+  }
+  #tab-customers .page-head { flex: 0 0 auto; }
+  #tab-customers .card {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; flex-direction: column;
+    margin-bottom: 0;
+  }
+  #tab-customers .customers-scroll {
+    flex: 1 1 auto; min-height: 0;
+    max-height: 60vh;                 /* 兜底：表格最多占 60% 视口，确保翻页条完整可见 */
+    max-height: 60dvh;                /* 动态视口：排除手机浏览器地址栏等可变 UI */
+    overflow: auto;
+  }
+  #tab-customers .card { overflow: hidden; }  /* 防止 .card 被表格内容撑开 */
+  #tab-customers .pager { flex: 0 0 auto; padding-bottom: 16px; }
+
+  /* 订单管理：同客户页，表格内部滚动，翻页条常驻可见 */
+  #swipeTrack > #tab-orders {
+    display: flex; flex-direction: column;
+    height: 100%; min-height: 0;
+    overflow: hidden;
+  }
+  #tab-orders .page-head { flex: 0 0 auto; }
+  #tab-orders .card {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; flex-direction: column;
+    margin-bottom: 0;
+    overflow: hidden;
+  }
+  #tab-orders .orders-scroll {
+    flex: 1 1 auto; min-height: 0;
+    max-height: 60vh;
+    max-height: 60dvh;
+    overflow: auto;
+  }
+  #tab-orders .pager { flex: 0 0 auto; padding-bottom: 8px; }
 }
 /* 渲染失败提示：直接显示在对应 section 顶部，移动端也能看见（而不是静默空白） */
 .render-error {

@@ -13,6 +13,7 @@
     _subscribed: false,
     orderPage: 1,
     customerPage: 1,
+    customerPageSize: null,       // 客户页每页条数（可自定义，存 localStorage）
     customerFilter: { q: '', type: 'all' },
     sortDir: 'desc',
     orderSort: { key: 'intake_at', dir: 'desc' }, // 订单列表列排序
@@ -27,8 +28,11 @@
     _riskOnly: false            // 订单列表：仅显示红色风险单
   };
   const ORDER_PAGE_SIZE = 50;
-  const CUSTOMER_PAGE_SIZE = 20;
+  const CUSTOMER_PAGE_SIZE = 50;
   const ARCHIVE_AFTER_HOURS = 24;  // 定稿满 24 小时后在工作台默认隐藏
+
+  // 客户页每页条数：默认 CUSTOMER_PAGE_SIZE，用户可在页面下拉框自定义，存 localStorage
+  state.customerPageSize = parseInt(localStorage.getItem('ds_cust_pagesize'), 10) || CUSTOMER_PAGE_SIZE;
 
   /* ---------- 防重复操作 ---------- */
   // 同一 key 同时只允许一个进行中；重复触发直接忽略，彻底杜绝"保存两次/重复提交"。
@@ -509,9 +513,10 @@
       if (el.closest('#tabs')) return;
       el.style.display = can(el.dataset.perm) ? '' : 'none';
     });
-    // 流程推进 / 投诉记录（详情弹窗内动态生成，用 data-flow / data-complaint 标识）
+    // 流程推进 / 投诉记录 / 手动补记修改次数（详情弹窗内动态生成）
     $$('[data-flow]').forEach(el => { if (!can('flow_advance')) el.style.display = 'none'; });
     $$('[data-complaint="inc"]').forEach(el => { if (!can('complaint_add')) el.style.display = 'none'; });
+    $$('[data-revision="inc"]').forEach(el => { if (!can('orders_edit')) el.style.display = 'none'; });
     // 若当前激活页被隐藏，切到首个可见页
     const active = $('#tabs button.active');
     if (active && active.style.display === 'none') {
@@ -2494,6 +2499,11 @@
       state._orderDraftRestored = false;
       state._orderDraftTs = null;
       state._orderDraftNewCust = null;
+      // 新建订单默认截稿日期为明天 12:00（本地时区）
+      const tmr = new Date();
+      tmr.setDate(tmr.getDate() + 1);
+      tmr.setHours(12, 0, 0, 0);
+      state.editingOrder.deadline = tmr.toISOString();
     }
     renderOrderModal();
   }
@@ -2809,7 +2819,7 @@
   }
 
   // 截稿时间选择器：日期 + 小时/分钟双下拉（仅内部字段，不含外层布局/快捷按钮）
-  function deadlineFieldsHtml(o) {
+  function deadlineFieldsHtml(o, disabled) {
     const v = o.deadline ? toLocalInput(o.deadline) : '';
     const [date, time] = v ? v.split('T') : ['', ''];
     // 未设置时间时默认聚焦 12:00，提升新建订单效率
@@ -2825,13 +2835,14 @@
     });
     const presets = [['今天', 'today'], ['明天', 'tomorrow'], ['3天后', 'plus3']];
     const hidden = (date && hh && mm) ? (date + 'T' + hh + ':' + mm) : '';
+    const dis = disabled ? ' disabled' : '';
     return {
       fields: ''
-        + '<div class="dl-field"><label>截稿日期</label><input id="oDeadlineDate" type="date" value="' + date + '"></div>'
+        + '<div class="dl-field"><label>截稿日期</label><input id="oDeadlineDate" type="date" value="' + date + '"' + dis + '></div>'
         + '<div class="dl-time"><label>截稿时间</label><div class="dl-time-pair">'
-        +   '<select id="oDeadlineHour">' + hOpts + '</select>'
+        +   '<select id="oDeadlineHour"' + dis + '>' + hOpts + '</select>'
         +   '<span class="dl-colon">:</span>'
-        +   '<select id="oDeadlineMin">' + mOpts + '</select>'
+        +   '<select id="oDeadlineMin"' + dis + '>' + mOpts + '</select>'
         + '</div></div>'
         + '<input id="oDeadline" type="hidden" value="' + hidden + '">',
       presets: presets
@@ -2855,6 +2866,50 @@
     hh.value = '12'; hh.dispatchEvent(new Event('change', { bubbles: true }));
     mm.value = '00'; mm.dispatchEvent(new Event('change', { bubbles: true }));
     syncDeadline();
+  }
+
+  // 订单字段锁定规则（分节点、分字段，避免一刀切）
+  //  - 派单设计师 / 协作设计师：派单那一刻占用产能，从「派单」起锁定（改走换人流程）
+  //  - 客户 / 金额 / 任务类型 / 项目名 / 截稿日期：交付后入账依据，「已定稿/已换人」定格
+  //  - 备注 / 文件路径 / 设计稿路径 / 投诉记录：永不锁定（交付后常需补录、投诉）
+  const LOCK_MID = ['派单', '提案', '提案不通过', '设计中', '初稿', '客户反馈', '修改中'];
+  function orderLockRules(status) {
+    if (LOCK_MID.includes(status)) return { level: 'mid', locked: new Set(['designer', 'collab']) };
+    if (status === '已定稿' || status === '已换人') return { level: 'terminal', locked: new Set(['designer', 'collab', 'customer', 'amount', 'type', 'title', 'deadline']) };
+    return { level: 'open', locked: new Set() };
+  }
+  let _orderLockSnapshot = null;
+  function applyOrderLock(o) {
+    const rules = orderLockRules(o.status);
+    _orderLockSnapshot = (rules.level === 'open') ? null : {
+      level: rules.level, status: o.status, locked: rules.locked,
+      fields: {
+        title: o.title, task_type: o.task_type, customer_id: o.customer_id,
+        amount: o.amount, deadline: o.deadline,
+        assigned_designer_id: o.assigned_designer_id,
+        collab_designer_ids: Array.isArray(o.collab_designer_ids) ? o.collab_designer_ids.slice() : []
+      }
+    };
+    if (rules.level === 'open') return;
+    const lock = (el) => { if (!el) return; el.disabled = true; el.classList.add('locked'); };
+    if (rules.locked.has('designer')) {
+      lock(document.getElementById('oDesigner'));
+      $$('#modalBox .oCollab').forEach(c => { c.disabled = true; c.classList.add('locked'); });
+    }
+    if (rules.locked.has('customer')) {
+      lock(document.getElementById('oCustomerText'));
+      const ar = document.getElementById('oCustomerArrow');
+      if (ar) { ar.disabled = true; ar.classList.add('locked'); }
+    }
+    if (rules.locked.has('amount')) lock(document.getElementById('oAmount'));
+    if (rules.locked.has('type')) lock(document.getElementById('oType'));
+    if (rules.locked.has('title')) lock(document.getElementById('oTitle'));
+    if (rules.locked.has('deadline')) {
+      lock(document.getElementById('oDeadlineDate'));
+      lock(document.getElementById('oDeadlineHour'));
+      lock(document.getElementById('oDeadlineMin'));
+      $$('#modalBox [data-dl-preset]').forEach(b => { b.disabled = true; b.classList.add('locked'); });
+    }
   }
 
   function renderOrderModal() {
@@ -2910,17 +2965,28 @@
     }
 
     // 订单信息表单（客户/金额/设计师/备注等）—— 详情模式下默认收起，不干扰流程查看
-    const dl = deadlineFieldsHtml(o);
+    const lockRules = orderLockRules(o.status);
+    const dl = deadlineFieldsHtml(o, lockRules.locked.has('deadline'));
+    const dTitle = lockRules.locked.has('title') ? ' disabled' : '';
+    const dType = lockRules.locked.has('type') ? ' disabled' : '';
+    const dCustomer = lockRules.locked.has('customer') ? ' disabled' : '';
+    const dAmount = lockRules.locked.has('amount') ? ' disabled' : '';
+    const dDesigner = lockRules.locked.has('designer') ? ' disabled' : '';
+    const dCollab = lockRules.locked.has('collab') ? ' disabled' : '';
+    const dDeadline = lockRules.locked.has('deadline') ? ' disabled' : '';
+    // 锁定状态通过禁用态控件本身表达，不再额外显示黄色提示横幅
+    const lockBanner = '';
     const infoForm = `
       <div class="compact-form order-detail-form">
+        ${lockBanner}
         <div class="form-section order-info-sec">
           <div class="form-sec-title">基础信息</div>
           <div class="order-info-row">
-            <div class="field oi-title"><label>项目</label><input id="oTitle" value="${esc(o.title)}" placeholder="如：XX公司名片设计"></div>
-            <div class="field oi-type"><label>任务类型</label><select id="oType">${window.Cfg.TASK_TYPES.map(t => '<option' + (t === o.task_type ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
-            <div class="field oi-customer customer-combo"><label>客户</label><div class="combo-input-wrap"><input type="hidden" id="oCustomer" value="${esc(o.customer_id || '')}"><input type="text" id="oCustomerText" value="${esc(customerText)}" placeholder="输入客户名，未找到则自动新建" autocomplete="off"><button type="button" class="combo-arrow" id="oCustomerArrow" title="选择客户" tabindex="-1">▼</button></div><div class="customer-suggest" id="oCustomerSuggest" style="display:none"></div></div>
-            <div class="field oi-amount"><label>金额（元）</label><input id="oAmount" type="number" value="${o.amount || 0}" placeholder="元"></div>
-            <div class="field oi-status"><label>状态</label><div class="ro-box"><span class="pill" style="background:${(window.Cfg.STATUS[o.status] || {}).color || '#64748b'}">${esc((window.Cfg.STATUS[o.status] || {}).detail || o.status)}</span></div></div>
+            <div class="field oi-title"><label>项目</label><input id="oTitle" value="${esc(o.title)}" placeholder="如：XX公司名片设计"${dTitle}></div>
+            <div class="field oi-type"><label>任务类型</label><select id="oType"${dType}>${window.Cfg.TASK_TYPES.map(t => '<option' + (t === o.task_type ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
+            <div class="field oi-customer customer-combo"><label>客户</label><div class="combo-input-wrap"><input type="hidden" id="oCustomer" value="${esc(o.customer_id || '')}"><input type="text" id="oCustomerText" value="${esc(customerText)}" placeholder="输入客户名，未找到则自动新建" autocomplete="off"${dCustomer}><button type="button" class="combo-arrow" id="oCustomerArrow" title="选择客户" tabindex="-1"${dCustomer}>▼</button></div><div class="customer-suggest" id="oCustomerSuggest" style="display:none"></div></div>
+            <div class="field oi-amount"><label>金额（元）</label><input id="oAmount" type="number" value="${o.amount || 0}" placeholder="元"${dAmount}></div>
+            <div class="field oi-status"><label>状态</label><div class="ro-box"><span class="status-badge" style="background:${(window.Cfg.STATUS[o.status] || {}).color || '#64748b'}">${esc((window.Cfg.STATUS[o.status] || {}).detail || o.status)}</span></div></div>
           </div>
           <div class="field cust-info-line" id="oCustInfo" style="margin-top:4px"><div class="cust-meta">${customerInfoHtml(cs, o.customer_id, true)}</div></div>
           <div id="oNewCustomer" class="card light" style="display:none;margin:8px 0 0;padding:10px">
@@ -2935,18 +3001,20 @@
 
         <div class="form-section">
           <div class="form-sec-title">派单与协作</div>
-          <div class="dl-row">
-            <div class="field dl-des"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
-            ${dl.fields}
-            <div class="dl-presets"><label>快捷</label><div class="chips">${dl.presets.map(p => '<button type="button" class="chip" data-dl-preset="' + p[1] + '">' + p[0] + '</button>').join('')}</div></div>
+          <div class="dispatch-row">
+            <div class="field dl-des"><label>派单设计师</label><select id="oDesigner"${dDesigner}><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
+            <div class="field collab-field"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><div class="chips">${collabHtml ? collabHtml.replace(/class="oCollab"/g, 'class="oCollab"' + dCollab) : '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
           </div>
-          <div class="field" style="margin-top:8px"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
+          <div class="dl-row deadline-row" style="margin-top:8px">
+            ${dl.fields}
+            <div class="dl-presets"><label>快捷</label><div class="chips">${dl.presets.map(p => '<button type="button" class="chip" data-dl-preset="' + p[1] + '"' + dDeadline + '>' + p[0] + '</button>').join('')}</div></div>
+          </div>
         </div>
 
         <div class="form-section">
           <div class="form-sec-title">修改与投诉 <span class="muted" style="font-weight:400;font-size:12px">（自动累计）</span></div>
           <div class="grid2-sm">
-            <div class="field"><label>修改次数</label><div class="ro-box"><span id="revVal" class="ro-val">${o.revision_count || 0}</span><span class="muted" style="font-size:11px"> 流程自动累计</span></div></div>
+            <div class="field"><label>修改次数</label><div class="ro-box"><span id="revVal" class="ro-val">${o.revision_count || 0}</span><button type="button" class="btn-mini" data-revision="inc" title="手动补记一次修改（客户反复修改时 +1）">＋1</button><span class="muted" style="font-size:11px"> 流程自动累计</span></div></div>
             <div class="field"><label>客户投诉笔数</label><div class="ro-box"><span id="complaintVal" class="ro-val">${o.complaint_count || 0}</span><button type="button" class="btn-mini" data-complaint="inc" title="记录一次客户投诉（+1）">＋投诉</button></div></div>
           </div>
           <div class="field" style="margin-top:10px"><label>投诉原因</label>
@@ -3028,12 +3096,14 @@
 
         <div class="form-section">
           <div class="form-sec-title">派单与协作 <span class="muted" style="font-weight:400;font-size:11px">（可稍后在流程中派单）</span></div>
-          <div class="dl-row">
+          <div class="dispatch-row">
             <div class="field dl-des"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
+            <div class="field collab-field"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（2~3 人协同，各计 1 单）</span></label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
+          </div>
+          <div class="dl-row deadline-row" style="margin-top:8px">
             ${dl.fields}
             <div class="dl-presets"><label>快捷</label><div class="chips">${dl.presets.map(p => '<button type="button" class="chip" data-dl-preset="' + p[1] + '">' + p[0] + '</button>').join('')}</div></div>
           </div>
-          <div class="field" style="margin-top:8px"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（2~3 人协同，各计 1 单）</span></label><div class="chips">${collabHtml || '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
         </div>
 
         <details class="info-collapse"><summary>文件路径 / 备注（可选）</summary>
@@ -3062,7 +3132,7 @@
         </div>
       </div>
       <div class="flow-detail">${flowBlock}</div>
-      <details class="info-collapse" open><summary>订单信息（客户 / 金额 / 设计师 / 截稿时间，派单前请填写）</summary>
+      <details class="info-collapse" open><summary>订单信息（客户 / 金额 / 设计师 / 截稿时间）</summary>
         ${infoForm}
       </details>
       <div class="row" style="justify-content:flex-end">
@@ -3081,6 +3151,7 @@
       </div>`;
     }
     openModal(html);
+    applyOrderLock(o);
     $$('#modalBox [data-close]').forEach(b => b.addEventListener('click', () => closeModal()));
     if ($('#oDelete')) $('#oDelete').addEventListener('click', () => { delOrder(o.id); });
     $('#oSave').addEventListener('click', () => saveOrderFromModal());
@@ -3122,6 +3193,9 @@
     // 客户投诉笔数：只读 +1，点击弹出自定义窗口选择原因并填写备注
     const cInc = $('#modalBox [data-complaint="inc"]');
     if (cInc) cInc.addEventListener('click', () => complaintModal());
+    // 修改次数：流程自动累计 + 手动补记（修改中反复修改时可 +1）
+    const rInc = $('#modalBox [data-revision="inc"]');
+    if (rInc) rInc.addEventListener('click', () => addRevisionModal());
     // 素材文件路径：实时预览 + 点击打开/复制
     const fpEl = $('#oFilePaths');
     if (fpEl) {
@@ -3153,6 +3227,10 @@
       if (cp) { copyText(cp.dataset.fpcopy); toast('已复制：' + cp.dataset.fpcopy); }
     });
     applyPermissions();
+    // 双保险：在所有 bind 完成后再应用一次锁定，防止任何后续逻辑意外覆盖 disabled 状态；
+    // 另加 requestAnimationFrame 兜底，确保异步 DOM 操作后锁定仍生效。
+    applyOrderLock(o);
+    requestAnimationFrame(() => { if (state.editingOrder === o) applyOrderLock(o); });
   }
 
   // 流程时间轴（每个进度都有时间记忆）：已完成节点显示完成时间，当前节点高亮，未到达显示待推进
@@ -3563,6 +3641,47 @@
     });
   }
 
+  // 手动补记修改次数：客户反复在修改中提要求时，流程动作不会重复触发，可手动 +1
+  function addRevisionModal() {
+    const o = state.editingOrder;
+    const html = `
+      <button class="close" data-close>×</button>
+      <h3>补记修改次数</h3>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 10px">当前修改次数：<b>${o.revision_count || 0}</b>，确认后再加 1 次？</p>
+      <div class="field"><label>修改备注（可选）</label>
+        <textarea id="revNote" rows="3" placeholder="如：客户要求调整整体配色 / 文案大改 / 加急二改等"></textarea>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button class="btn secondary" id="revCancel">取消</button>
+        <button class="btn" id="revConfirm">确认 +1</button>
+      </div>`;
+    openModal(html);
+    $('#revCancel').addEventListener('click', () => renderOrderModal());
+    $$('#modalBox [data-close]').forEach(b => b.addEventListener('click', () => renderOrderModal()));
+    $('#revConfirm').addEventListener('click', async () => {
+      if (!lockOp('revision:' + (o.id || 'x'))) return;
+      try {
+        const note = ($('#revNote').value || '').trim();
+        const now = new Date().toISOString();
+        o.revision_count = (Number(o.revision_count) || 0) + 1;
+        o.revision_log = Array.isArray(o.revision_log) ? o.revision_log : [];
+        o.revision_log.push(now);
+        o.revision_log.sort();
+        o.revision_at = now;
+        // 顺手把本次手动补记也存到 revision_note，方便后续查看批次原因
+        if (note) {
+          const prev = (o.revision_note || '').trim();
+          o.revision_note = prev ? (prev + '\n' + now.slice(0, 10) + '：' + note) : (now.slice(0, 10) + '：' + note);
+        }
+        await DB.saveOrder(o);
+        await refreshAll();
+        renderOrderModal();
+        toast('已补记 1 次修改');
+      } catch (e) { console.error(e); toast('保存失败：' + e.message); }
+      finally { unlockOp('revision:' + (o.id || 'x')); }
+    });
+  }
+
   // 工作台卡片：直接推进流程，无需打开订单详情
   async function wbAdvance(id, action) {
     const o = (state._orders || []).find(x => x.id === id);
@@ -3731,6 +3850,20 @@
     try {
       syncFieldsFromModal();
       const o = state.editingOrder;
+      // 双保险：锁定字段以快照原值覆盖，防止绕过 UI 改动核心数据
+      if (_orderLockSnapshot && _orderLockSnapshot.status === o.status) {
+        const f = _orderLockSnapshot.fields, L = _orderLockSnapshot.locked;
+        if (L.has('title')) o.title = f.title;
+        if (L.has('type')) o.task_type = f.task_type;
+        if (L.has('customer')) o.customer_id = f.customer_id;
+        if (L.has('amount')) o.amount = f.amount;
+        if (L.has('deadline')) o.deadline = f.deadline;
+        if (L.has('designer')) {
+          o.assigned_designer_id = f.assigned_designer_id;
+          o.collab_designer_ids = f.collab_designer_ids.slice();
+        }
+      }
+      _orderLockSnapshot = null;
       try { await ensureCustomerFromModal(); } catch (e) { return; }
       // 剥离 UI 临时状态（联系人选择等），避免传给数据库不存在的列
       delete o._contactName;
@@ -4645,6 +4778,16 @@
       });
       const ct = $('#custTypeFilter');
       if (ct) ct.addEventListener('change', () => { state.customerFilter.type = ct.value; state.customerPage = 1; renderCustomers(); });
+      // 客户页每页条数下拉：自定义分页大小，存 localStorage 记忆
+      const ps = $('#custPageSize');
+      if (ps) {
+        ps.value = String(state.customerPageSize || CUSTOMER_PAGE_SIZE);
+        ps.addEventListener('change', () => {
+          state.customerPageSize = parseInt(ps.value, 10) || CUSTOMER_PAGE_SIZE;
+          localStorage.setItem('ds_cust_pagesize', String(state.customerPageSize));
+          state.customerPage = 1; renderCustomers();
+        });
+      }
       if (ci && state.customerFilter.q) ci.value = state.customerFilter.q;
       if (ct && state.customerFilter.type) ct.value = state.customerFilter.type;
       state._custFilterBound = true;
@@ -4664,14 +4807,15 @@
       }
       return true;
     });
-    // 分页：每页 20，避免客户量过大时一次性渲染导致卡顿
+    // 分页：每页数量取用户自定义的 customerPageSize（默认 CUSTOMER_PAGE_SIZE），避免客户量过大时一次性渲染导致卡顿
+    const pageSize = state.customerPageSize || CUSTOMER_PAGE_SIZE;
     const total = cs.length;
-    const totalPages = Math.max(1, Math.ceil(total / CUSTOMER_PAGE_SIZE));
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
     if (state.customerPage < 1) state.customerPage = 1;
     if (state.customerPage > totalPages) state.customerPage = totalPages;
     const page = state.customerPage;
-    const start = (page - 1) * CUSTOMER_PAGE_SIZE;
-    const pageItems = cs.slice(start, start + CUSTOMER_PAGE_SIZE);
+    const start = (page - 1) * pageSize;
+    const pageItems = cs.slice(start, start + pageSize);
     $('#customersTable').innerHTML =
       '<thead><tr><th>客户</th><th>联系人</th><th>电话</th><th>标注</th><th>累计金额</th><th>订单数</th><th>最近下单</th><th>类型</th><th>操作</th></tr></thead><tbody>' +
       (pageItems.length ? pageItems.map(c => {
@@ -4701,24 +4845,21 @@
       });
       table._actBound = true;
     }
-    renderCustomersPager(total, page, totalPages);
-    const fi = $('#custFilterInfo');
-    if (fi) {
-      const all = rawCs.length;
-      fi.textContent = (total < all) ? ('筛选后 ' + total + ' / 共 ' + all + ' 个客户') : ('共 ' + all + ' 个客户');
-    }
+    renderCustomersPager(total, page, totalPages, rawCs.length);
     applyPermissions();
     updateSwipeDiag();
   }
 
   // 客户列表分页控件
-  function renderCustomersPager(total, page, totalPages) {
+  function renderCustomersPager(total, page, totalPages, all) {
     const pg = $('#customersPager');
     if (!pg) return;
     pg._totalPages = totalPages;
     if (total <= 0) { pg.innerHTML = ''; return; }
+    const allCount = all == null ? total : all;
+    const stat = (total < allCount) ? ('筛选后 ' + total + ' / 共 ' + allCount) : ('共 ' + allCount);
     pg.innerHTML =
-      '<span class="pager-info">共 ' + total + ' 个客户 · 第 ' + page + ' / ' + totalPages + ' 页</span>' +
+      '<span class="pager-info">' + stat + ' · 第 ' + page + ' / ' + totalPages + ' 页</span>' +
       '<button class="btn sm" data-pg="first"' + (page <= 1 ? ' disabled' : '') + '>« 首页</button>' +
       '<button class="btn sm" data-pg="prev"' + (page <= 1 ? ' disabled' : '') + '>上一页</button>' +
       '<button class="btn sm" data-pg="next"' + (page >= totalPages ? ' disabled' : '') + '>下一页</button>' +
@@ -4837,18 +4978,51 @@
   async function viewCustomer(id) {
     const c = (state._customers || []).find(x => x.id === id); if (!c) return;
     const orders = (state._orders || []).filter(o => o.customer_id === id);
+    const orderCount = orders.length;
     const amt = orders.reduce((s, o) => s + (Number(o.amount) || 0), 0);
-    const repeat = orders.length >= 2;
-    const html = `<button class="close" data-close>×</button><h3>${esc(c.name)} ${repeat ? '<span class="repeat-tag">复购客户</span>' : ''}</h3>
+    const repurchaseCount = orderCount >= 2 ? orderCount - 1 : 0;
+    const avgAmt = orderCount ? Math.round(amt / orderCount) : 0;
+    const lastOrder = orderCount ? orders.reduce((m, o) => (o.intake_at || '') > m ? (o.intake_at || '') : m, '') : '';
+    const totalComplaints = orders.reduce((s, o) => s + (Number(o.complaint_count) || 0), 0);
+    // 客户分层：沉睡（90天无新单）/ 重点（≥3单）/ 新（1单）/ 普通 / 潜在（0单）
+    let seg = { label: '普通客户', cls: 'seg-normal' };
+    if (orderCount === 0) seg = { label: '潜在客户', cls: 'seg-dorm' };
+    else {
+      const days = lastOrder ? Math.floor((Date.now() - new Date(lastOrder).getTime()) / 86400000) : 0;
+      if (days > 90) seg = { label: '沉睡客户', cls: 'seg-dorm' };
+      else if (orderCount >= 3) seg = { label: '重点客户', cls: 'seg-key' };
+      else if (orderCount === 1) seg = { label: '新客户', cls: 'seg-new' };
+    }
+    // 投诉记录：跨订单聚合 complaint_log（每条带来源单号/项目）
+    const compRows = [];
+    orders.forEach(o => { (Array.isArray(o.complaint_log) ? o.complaint_log : []).forEach(cmp => compRows.push(Object.assign({}, cmp, { orderNo: o.order_no, title: o.title }))); });
+    compRows.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+    const compHtml = totalComplaints === 0
+      ? '<div class="cust-comp-empty">暂无投诉记录 ✓</div>'
+      : '<div class="cust-comp-list">' + compRows.map(cmp =>
+          '<div class="cust-comp-item"><div class="cust-comp-top"><span class="badge ' + (cmp.reason === '设计原因' ? 'bad' : 'warn') + '">' + esc(cmp.reason || '—') + '</span> <span class="muted">' + (cmp.ts ? fmtTime(cmp.ts) : '') + '</span></div>' +
+          '<div class="cust-comp-order muted">单号 ' + esc(cmp.orderNo) + ' · ' + esc(cmp.title) + '</div>' +
+          (cmp.note ? '<div class="cust-comp-note">' + esc(cmp.note) + '</div>' : '') +
+          '</div>').join('') + '</div>';
+    const html = `<button class="close" data-close>×</button>
+      <div class="cust-head"><h3>${esc(c.name)}</h3><div class="cust-seg"><span class="seg-tag ${seg.cls}">${seg.label}</span></div></div>
+      <div class="cust-metrics">
+        <div class="cm"><div class="cm-val">¥${money(amt)}</div><div class="cm-label">累计消费</div></div>
+        <div class="cm"><div class="cm-val">${repurchaseCount} 次</div><div class="cm-label">复购次数</div></div>
+        <div class="cm"><div class="cm-val">¥${money(avgAmt)}</div><div class="cm-label">平均客单价</div></div>
+        <div class="cm"><div class="cm-val">${lastOrder ? fmtTime(lastOrder) : '—'}</div><div class="cm-label">最近下单</div></div>
+      </div>
       <div class="grid2">
         <div><b>联系人：</b>${esc(c.company || '—')}</div><div><b>电话：</b>${esc(c.phone || '—')}</div>
         <div><b>地址：</b>${esc(c.address || '—')}</div><div><b>文字标注：</b>${esc(c.tag || '—')}</div>
       </div>
       ${ (Array.isArray(c.contacts_json) && c.contacts_json.length) ? '<div style="margin-top:10px"><b>更多联系人：</b><div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px">' + c.contacts_json.map(ct => '<span class="cust-pill">' + esc(ct.role || '联系人') + '：' + esc(ct.name || '') + (ct.phone ? ' ' + esc(ct.phone) : '') + '</span>').join('') + '</div></div>' : '' }
       <p style="color:var(--muted)">${esc(c.notes || '')}</p>
-      <h3>历史订单（${orders.length}）</h3>
+      <h3>投诉记录（${totalComplaints}）</h3>
+      <div class="cust-complaints">${compHtml}</div>
+      <h3>历史订单（${orderCount}）</h3>
       <div class="table-scroll"><table class="tbl" id="custHistoryTable"><thead><tr><th>单号</th><th>项目</th><th>金额</th><th>状态</th><th>接单</th></tr></thead><tbody>` +
-      (orders.length ? orders.slice().sort((a, b) => (a.intake_at || '').localeCompare(b.intake_at || '')).map(o =>
+      (orderCount ? orders.slice().sort((a, b) => (a.intake_at || '').localeCompare(b.intake_at || '')).map(o =>
         '<tr style="cursor:pointer" data-oid="' + o.id + '" title="点击查看该订单"><td>' + esc(o.order_no) + '</td><td>' + esc(o.title) + '</td><td class="num">¥' + money(o.amount) + '</td><td>' + pill(o.status) + '</td><td>' + fmtTime(o.intake_at) + '</td></tr>'
       ).join('') : '<tr><td colspan="5" class="empty">暂无订单</td></tr>') + '</tbody></table></div>' +
       '<div class="modal-foot">' + (can('customers_edit') ? '<button class="btn" id="cEdit">编辑</button>' : '') +
