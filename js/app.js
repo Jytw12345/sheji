@@ -14,7 +14,9 @@
     orderPage: 1,
     customerPage: 1,
     customerPageSize: null,       // 客户页每页条数（可自定义，存 localStorage）
+    orderPageSize: null,          // 订单页每页条数（可自定义，存 localStorage）
     customerFilter: { q: '', type: 'all' },
+    customerSort: { key: 'name', dir: 'asc' }, // 客户列表列排序
     sortDir: 'desc',
     orderSort: { key: 'intake_at', dir: 'desc' }, // 订单列表列排序
     _ordersDefaulted: false,
@@ -33,6 +35,13 @@
 
   // 客户页每页条数：默认 CUSTOMER_PAGE_SIZE，用户可在页面下拉框自定义，存 localStorage
   state.customerPageSize = parseInt(localStorage.getItem('ds_cust_pagesize'), 10) || CUSTOMER_PAGE_SIZE;
+  // 订单页每页条数：默认 ORDER_PAGE_SIZE，用户可在页面下拉框自定义，存 localStorage
+  state.orderPageSize = parseInt(localStorage.getItem('ds_order_pagesize'), 10) || ORDER_PAGE_SIZE;
+  // 客户列表排序方式记忆
+  try {
+    const savedCustSort = localStorage.getItem('ds_cust_sort');
+    if (savedCustSort) state.customerSort = JSON.parse(savedCustSort);
+  } catch (e) {}
 
   /* ---------- 防重复操作 ---------- */
   // 同一 key 同时只允许一个进行中；重复触发直接忽略，彻底杜绝"保存两次/重复提交"。
@@ -76,6 +85,52 @@
     return '<span class="pill" style="background:' + c + '">' + esc(cfg.label || status) + '</span>';
   }
   function catPill(cat) { return '<span class="pill cat-' + cat + '">' + cat + '</span>'; }
+  // 手机端「每页 N 条」下拉浮层：避免 <select> 被 overflow:hidden 父容器截断
+  // 浮层用 position:fixed 脱离文档流，根据按钮位置自动向上/向下弹出
+  function showPageSizePicker(opts) {
+    const { current, options, onSelect, anchor, placement } = opts;
+    const rect = (anchor && anchor.getBoundingClientRect) ? anchor.getBoundingClientRect() : null;
+    const pop = document.createElement('div');
+    pop.className = 'page-size-pop';
+    let html = '';
+    options.forEach(v => {
+      html += '<button class="page-size-pop-item' + (v === current ? ' active' : '') + '" data-val="' + v + '">' +
+        (v === current ? '✓ ' : '') + v + ' 条</button>';
+    });
+    pop.innerHTML = html;
+    document.body.appendChild(pop);
+    // 定位：placement='top' 强制向上；'bottom' 强制向下；默认自动判断
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const popW = Math.max(rect ? rect.width : 120, 116);
+    const estH = options.length * 44 + 8;
+    let left = rect ? rect.left : (vw - popW) / 2;
+    left = Math.max(8, Math.min(left, vw - popW - 8));
+    pop.style.left = left + 'px';
+    pop.style.width = popW + 'px';
+    if (rect) {
+      const below = vh - rect.bottom;
+      if (placement === 'top') {
+        pop.style.top = Math.max(8, rect.top - estH - 6) + 'px';
+      } else if (placement === 'bottom') {
+        pop.style.top = (rect.bottom + 6) + 'px';
+      } else if (below >= estH + 8) {
+        pop.style.top = (rect.bottom + 6) + 'px';
+      } else {
+        pop.style.top = Math.max(8, rect.top - estH - 6) + 'px';
+      }
+    } else {
+      pop.style.top = ((vh - estH) / 2) + 'px';
+    }
+    function close() { if (pop.parentNode) pop.remove(); document.removeEventListener('click', onDoc, true); }
+    function onDoc(e) { if (!pop.contains(e.target) && e.target !== anchor) close(); }
+    setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+    pop.addEventListener('click', e => {
+      const opt = e.target.closest('[data-val]');
+      if (!opt) return;
+      const val = parseInt(opt.dataset.val, 10);
+      close(); onSelect(val);
+    });
+  }
   // 是否参与设计（派单/协作/工作台等）：管理员默认不参与；非管理员默认参与，除非显式关闭 active_design
   function isActiveDesign(d) { return d.role === '管理员' ? false : (d.active_design !== false); }
   // 视图范围：由权限点 view_all_orders 决定（管理员/店长默认开；设计师默认关，管理员可在权限配置按设计师开启）
@@ -115,6 +170,32 @@
     if (state.orderSort.key === key) state.orderSort.dir = state.orderSort.dir === 'asc' ? 'desc' : 'asc';
     else state.orderSort = { key, dir: 'asc' };
     state.orderPage = 1; renderOrders();
+  }
+  function toggleCustomerSort(key) {
+    if (state.customerSort.key === key) state.customerSort.dir = state.customerSort.dir === 'asc' ? 'desc' : 'asc';
+    else state.customerSort = { key, dir: 'asc' };
+    try { localStorage.setItem('ds_cust_sort', JSON.stringify(state.customerSort)); } catch (e) {}
+    state.customerPage = 1; renderCustomers();
+  }
+  function cmpCustomers(a, b, key, dir) {
+    const orders = state._orders || [];
+    const coA = orders.filter(o => o.customer_id === a.id);
+    const coB = orders.filter(o => o.customer_id === b.id);
+    let r = 0;
+    if (key === 'name') {
+      r = String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
+    } else if (key === 'amount') {
+      const amtA = coA.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+      const amtB = coB.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+      r = amtA - amtB;
+    } else if (key === 'orders') {
+      r = coA.length - coB.length;
+    } else if (key === 'lastOrder') {
+      const lastA = coA.map(o => o.intake_at || '').filter(Boolean).sort().slice(-1)[0] || '';
+      const lastB = coB.map(o => o.intake_at || '').filter(Boolean).sort().slice(-1)[0] || '';
+      r = lastA > lastB ? 1 : lastA < lastB ? -1 : 0;
+    }
+    return dir === 'asc' ? r : -r;
   }
   // 从仪表盘待办卡片跳订单列表并套用对应筛选
   function gotoOrders(filterKey) {
@@ -2365,14 +2446,15 @@
     if (state._overdueOnly) orders = orders.filter(o => o.deadline && new Date(o.deadline).getTime() < Date.now() && !isFinishedStatus(o.status));
     if (state._dueTodayOnly) { const t = new Date().toISOString().slice(0, 10); orders = orders.filter(o => o.deadline && o.deadline.slice(0, 10) === t); }
     if (state._riskOnly) orders = orders.filter(o => { const r = riskInfo(o); return r.level === 'red' && !isFinishedStatus(o.status); });
-    // 分页：每页 50，避免几千行一次性渲染导致卡顿
+    // 分页：每页条数取用户自定义的 orderPageSize（默认 ORDER_PAGE_SIZE），避免几千行一次性渲染导致卡顿
+    const pageSize = state.orderPageSize || ORDER_PAGE_SIZE;
     const total = orders.length;
-    const totalPages = Math.max(1, Math.ceil(total / ORDER_PAGE_SIZE));
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
     if (state.orderPage < 1) state.orderPage = 1;
     if (state.orderPage > totalPages) state.orderPage = totalPages;
     const page = state.orderPage;
-    const start = (page - 1) * ORDER_PAGE_SIZE;
-    const pageItems = orders.slice(start, start + ORDER_PAGE_SIZE);
+    const start = (page - 1) * pageSize;
+    const pageItems = orders.slice(start, start + pageSize);
     const dsMap = Object.fromEntries((state._designers || []).map(d => [d.id, d.name]));
     const rows = pageItems.map(o => {
       const cat = window.Cfg.orderCategory(Number(o.amount) || 0, state._settings);
@@ -2444,14 +2526,27 @@
     if (!pg) return;
     pg._totalPages = totalPages;
     if (total <= 0) { pg.innerHTML = ''; return; }
+    const curSize = state.orderPageSize || ORDER_PAGE_SIZE;
+    const sizeOptions = [20, 50, 100, 200];
+    const sizeCtl = '<button class="btn sm page-size-btn" data-ps="orders">每页 ' + curSize + ' 条 ▼</button>';
     pg.innerHTML =
       '<span class="pager-info">共 ' + total + ' 单 · 第 ' + page + ' / ' + totalPages + ' 页</span>' +
+      sizeCtl +
       '<button class="btn sm" data-pg="first"' + (page <= 1 ? ' disabled' : '') + '>« 首页</button>' +
       '<button class="btn sm" data-pg="prev"' + (page <= 1 ? ' disabled' : '') + '>上一页</button>' +
       '<button class="btn sm" data-pg="next"' + (page >= totalPages ? ' disabled' : '') + '>下一页</button>' +
       '<button class="btn sm" data-pg="last"' + (page >= totalPages ? ' disabled' : '') + '>末页 »</button>';
     if (!pg._bound) {
       pg.addEventListener('click', e => {
+        const btn = e.target.closest('.page-size-btn');
+        if (btn && btn.dataset.ps === 'orders') {
+          showPageSizePicker({ current: state.orderPageSize || ORDER_PAGE_SIZE, options: sizeOptions, anchor: btn, placement: 'top', onSelect: v => {
+            state.orderPageSize = v;
+            try { localStorage.setItem('ds_order_pagesize', String(v)); } catch (err) {}
+            state.orderPage = 1; renderOrders();
+          }});
+          return;
+        }
         const b = e.target.closest('[data-pg]');
         if (!b || b.disabled) return;
         const tp = pg._totalPages || 1;
@@ -4778,16 +4873,6 @@
       });
       const ct = $('#custTypeFilter');
       if (ct) ct.addEventListener('change', () => { state.customerFilter.type = ct.value; state.customerPage = 1; renderCustomers(); });
-      // 客户页每页条数下拉：自定义分页大小，存 localStorage 记忆
-      const ps = $('#custPageSize');
-      if (ps) {
-        ps.value = String(state.customerPageSize || CUSTOMER_PAGE_SIZE);
-        ps.addEventListener('change', () => {
-          state.customerPageSize = parseInt(ps.value, 10) || CUSTOMER_PAGE_SIZE;
-          localStorage.setItem('ds_cust_pagesize', String(state.customerPageSize));
-          state.customerPage = 1; renderCustomers();
-        });
-      }
       if (ci && state.customerFilter.q) ci.value = state.customerFilter.q;
       if (ct && state.customerFilter.type) ct.value = state.customerFilter.type;
       state._custFilterBound = true;
@@ -4797,7 +4882,7 @@
     const f = state.customerFilter || { q: '', type: 'all' };
     const q = (f.q || '').trim().toLowerCase();
     // 分页前先按搜索关键字 / 类型筛选
-    const cs = rawCs.filter(c => {
+    let cs = rawCs.filter(c => {
       const co = orders.filter(o => o.customer_id === c.id);
       if (f.type === 'repeat' && co.length < 2) return false;
       if (f.type === 'new' && co.length >= 2) return false;
@@ -4807,6 +4892,9 @@
       }
       return true;
     });
+    // 按当前排序规则排序（默认名称拼音升序）
+    const custSort = state.customerSort || { key: 'name', dir: 'asc' };
+    cs.sort((a, b) => cmpCustomers(a, b, custSort.key, custSort.dir));
     // 分页：每页数量取用户自定义的 customerPageSize（默认 CUSTOMER_PAGE_SIZE），避免客户量过大时一次性渲染导致卡顿
     const pageSize = state.customerPageSize || CUSTOMER_PAGE_SIZE;
     const total = cs.length;
@@ -4816,8 +4904,20 @@
     const page = state.customerPage;
     const start = (page - 1) * pageSize;
     const pageItems = cs.slice(start, start + pageSize);
+    const sk = custSort.key, sd = custSort.dir;
+    const sortable = (key, label, cls) => '<th class="' + (cls || '') + (key ? ' sortable' : '') + (key === sk ? ' sorted' : '') + '"' + (key ? ' data-sort="' + key + '"' : '') + '>' + label + (key === sk ? (sd === 'asc' ? ' ▲' : ' ▼') : '') + '</th>';
     $('#customersTable').innerHTML =
-      '<thead><tr><th>客户</th><th>联系人</th><th>电话</th><th>标注</th><th>累计金额</th><th>订单数</th><th>最近下单</th><th>类型</th><th>操作</th></tr></thead><tbody>' +
+      '<thead><tr>' +
+      sortable('name', '客户') +
+      sortable('', '联系人') +
+      sortable('', '电话') +
+      sortable('', '标注') +
+      sortable('amount', '累计金额', 'num') +
+      sortable('orders', '订单数', 'num') +
+      sortable('lastOrder', '最近下单') +
+      sortable('', '类型') +
+      sortable('', '操作') +
+      '</tr></thead><tbody>' +
       (pageItems.length ? pageItems.map(c => {
         const co = orders.filter(o => o.customer_id === c.id);
         const amt = co.reduce((s, o) => s + (Number(o.amount) || 0), 0);
@@ -4833,10 +4933,12 @@
           '<td><button class="btn sm" data-view="' + c.id + '">详情</button> ' +
           '<button class="btn sm danger" data-cdel="' + c.id + '" data-perm="customers_delete">删除</button></td></tr>';
       }).join('') : '<tr><td colspan="9" class="empty">暂无客户，点击“新建客户”</td></tr>') + '</tbody>';
-    // 使用事件委托绑定操作列按钮，避免 innerHTML 重绘后事件丢失
+    // 使用事件委托绑定操作列按钮与表头排序，避免 innerHTML 重绘后事件丢失
     const table = $('#customersTable');
     if (!table._actBound) {
       table.addEventListener('click', e => {
+        const th = e.target.closest('[data-sort]');
+        if (th) { e.stopPropagation(); toggleCustomerSort(th.dataset.sort); return; }
         const vb = e.target.closest('[data-view]');
         if (vb) { e.stopPropagation(); viewCustomer(vb.dataset.view); return; }
         const db = e.target.closest('[data-cdel]');
@@ -4858,14 +4960,27 @@
     if (total <= 0) { pg.innerHTML = ''; return; }
     const allCount = all == null ? total : all;
     const stat = (total < allCount) ? ('筛选后 ' + total + ' / 共 ' + allCount) : ('共 ' + allCount);
+    const curSize = state.customerPageSize || CUSTOMER_PAGE_SIZE;
+    const sizeOptions = [20, 50, 100, 200, 500];
+    const sizeCtl = '<button class="btn sm page-size-btn" data-ps="customers">每页 ' + curSize + ' 条 ▼</button>';
     pg.innerHTML =
       '<span class="pager-info">' + stat + ' · 第 ' + page + ' / ' + totalPages + ' 页</span>' +
+      sizeCtl +
       '<button class="btn sm" data-pg="first"' + (page <= 1 ? ' disabled' : '') + '>« 首页</button>' +
       '<button class="btn sm" data-pg="prev"' + (page <= 1 ? ' disabled' : '') + '>上一页</button>' +
       '<button class="btn sm" data-pg="next"' + (page >= totalPages ? ' disabled' : '') + '>下一页</button>' +
       '<button class="btn sm" data-pg="last"' + (page >= totalPages ? ' disabled' : '') + '>末页 »</button>';
     if (!pg._bound) {
       pg.addEventListener('click', e => {
+        const btn = e.target.closest('.page-size-btn');
+        if (btn && btn.dataset.ps === 'customers') {
+          showPageSizePicker({ current: state.customerPageSize || CUSTOMER_PAGE_SIZE, options: sizeOptions, anchor: btn, placement: 'top', onSelect: v => {
+            state.customerPageSize = v;
+            try { localStorage.setItem('ds_cust_pagesize', String(v)); } catch (err) {}
+            state.customerPage = 1; renderCustomers();
+          }});
+          return;
+        }
         const b = e.target.closest('[data-pg]');
         if (!b || b.disabled) return;
         const tp = pg._totalPages || 1;

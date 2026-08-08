@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v333" />
+  <link rel="stylesheet" href="css/styles.css?v352" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -219,20 +219,12 @@
                 <option value="repeat">复购客户</option>
                 <option value="new">新客</option>
               </select></div>
-              <label class="ps-wrap cust-ps-wrap">每页
-                <select id="custPageSize" class="mini-select">
-                  <option value="20">20</option>
-                  <option value="50">50</option>
-                  <option value="100">100</option>
-                  <option value="200">200</option>
-                  <option value="500">500</option>
-                </select> 条</label>
             </div>
           </div>
         </div>
         <div class="table-scroll customers-scroll"><table class="tbl" id="customersTable"></table></div>
+        <div class="pager" id="customersPager"></div>
       </div>
-      <div class="pager" id="customersPager"></div>
     </section>
 
     <!-- ============ 经营分析 ============ -->
@@ -479,12 +471,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v333"></script>
-  <script defer src="js/db.js?v333"></script>
-  <script defer src="js/calc.js?v333"></script>
-  <script defer src="js/charts.js?v333"></script>
-  <script defer src="js/export.js?v333"></script>
-  <script defer src="js/app.js?v333"></script>
+  <script defer src="js/config.js?v352"></script>
+  <script defer src="js/db.js?v352"></script>
+  <script defer src="js/calc.js?v352"></script>
+  <script defer src="js/charts.js?v352"></script>
+  <script defer src="js/export.js?v352"></script>
+  <script defer src="js/app.js?v352"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）

@@ -252,7 +252,7 @@ section.active { display: block; animation: fade .25s; }
   #tab-orders.active .orders-scroll, #tab-customers.active .customers-scroll {
     flex: 1 1 auto; min-height: 0; overflow: auto; max-height: none;
   }
-  #tab-orders.active .pager, #tab-customers.active .pager { flex: 0 0 auto; }
+  #tab-orders.active .pager, #tab-customers.active .pager { flex: 0 0 auto; padding: 8px 2px 4px; }
 }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
 .page-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
@@ -513,16 +513,51 @@ section.active { display: block; animation: fade .25s; }
 /* 订单列表分页控件 */
 .pager { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 2px; }
 .pager-info { color: var(--muted); font-size: 13px; margin-right: auto; }
-/* 客户页「每页 N 条」自定义下拉 */
-.ps-wrap { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; white-space: nowrap; flex-shrink: 0; margin-left: 12px; }
-.ps-wrap .mini-select { margin: 0; }
-@media (max-width: 760px) { .ps-wrap { margin-left: 8px; font-size: 12px; } }
+/* 客户/订单页「每页 N 条」自定义下拉 */
+.ps-wrap { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; white-space: nowrap; margin-left: 12px; }
+.ps-wrap .mini-select { margin: 0; min-width: 58px; flex-shrink: 0; }
 .pager .btn[disabled] { opacity: .45; cursor: not-allowed; }
-@media (max-width: 480px) {
-  .pager { justify-content: center; gap: 4px; padding: 8px 2px; }
-  .pager-info { width: 100%; text-align: center; margin: 0 0 4px; font-size: 12px; }
-  .pager .btn { min-width: 0; min-height: 28px; padding: 4px 8px; font-size: 12px; }
+
+/* 桌面端：确保「每页 N 条」下拉不被压缩换行 */
+@media (min-width: 761px) {
+  .ps-wrap { flex-wrap: nowrap; flex-shrink: 0; }
 }
+
+/* 手机端 ≤760px：分页强制两行，统计+每页条数在上，翻页按钮在下 */
+@media (max-width: 760px) {
+  .pager { justify-content: center; gap: 6px; padding: 10px 4px; }
+  .pager-info { flex: 0 0 auto; width: auto; text-align: left; margin: 0; font-size: 12px; }
+  .pager .ps-wrap { flex: 1 1 auto; min-width: 0; justify-content: flex-end; margin: 0; margin-left: 8px; font-size: 12px; }
+  /* 用伪元素在统计+每页条数后强制换行，四个按钮必到第二行 */
+  .pager::after {
+    content: "";
+    flex-basis: 100%;
+    height: 0;
+    order: 1;
+  }
+  .pager .btn[data-pg] { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 5px 4px; font-size: 12px; order: 2; }
+}
+
+/* 手机端「每页 N 条」下拉浮层：替代 <select>，避免被 overflow:hidden 父容器截断 */
+.page-size-pop {
+  position: fixed; z-index: 4000;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(15,23,42,.18);
+  padding: 4px;
+  box-sizing: border-box;
+  animation: popIn .12s ease;
+}
+.page-size-pop-item {
+  display: block; width: 100%; min-height: 38px; padding: 8px 12px;
+  border: none; border-radius: 7px; background: transparent;
+  color: var(--ink); font-size: 14px; text-align: left;
+  box-sizing: border-box; margin: 0;
+}
+.page-size-pop-item:active { background: #f1f5f9; }
+.page-size-pop-item.active { background: #eef2ff; color: var(--primary); font-weight: 600; }
+@keyframes popIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ---------- 自定义下拉（替换原生 select） ---------- */
 /* .cst 容器：填满父级但不强制撑开，兼容各种嵌套 flex 场景 */
@@ -682,6 +717,19 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .btn.ghost { background: #fff; color: var(--bad); border: 1px solid #fca5a5; }
 .btn.ghost:hover { background: #fef2f2; }
 .btn.sm { padding: 5px 9px; font-size: 12px; }
+/* 桌面端「每页 N 条」按钮：覆盖 .btn/.btn.sm 的深紫主色 */
+.btn.page-size-btn {
+  background: #eef2ff;
+  border: none;
+  color: var(--primary);
+  font-weight: 500;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  min-height: 28px;
+  box-shadow: none;
+}
+.btn.page-size-btn:hover { background: #e0e7ff; }
 /* 按钮组：本期/上期切换（仪表盘 + 经营分析） */
 .btn-group { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .btn-group .btn { border-radius: 0; border: none; border-right: 1px solid var(--line); background: #fff; color: var(--ink); font-weight: 600; }
@@ -988,6 +1036,20 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
   .btn, .btn-ghost, .tabs button, .wb-open-folder, .fp-copy, .chk { touch-action: manipulation; }
   /* 移动端按钮最小尺寸优化：sm 按钮也要容易点击 */
   .btn.sm { min-width: 44px; padding: 8px 12px; font-size: 13px; }
+  /* 手机端「每页 N 条」按钮：用高特异性覆盖 .btn/.btn.sm 的深紫主色 */
+  .pager .btn.page-size-btn {
+    background: #eef2ff;
+    border: none;
+    color: var(--primary);
+    font-weight: 500;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    min-width: 0;
+    min-height: 28px;
+    box-shadow: none;
+  }
+  .pager .btn.page-size-btn:hover { background: #e0e7ff; }
   input, select, textarea { font-size: 16px; }
   /* 表格：窄屏禁止换行，靠容器横向滚动，避免列被压成一条 */
   .table-scroll .tbl th, .table-scroll .tbl td { white-space: nowrap; }
@@ -1040,13 +1102,6 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
   #tab-customers .toolbar { gap: 6px; margin-bottom: 8px; }
   #tab-customers .toolbar-top { align-items: flex-end; }
   #tab-customers .toolbar-top > .field.cust-type-field { flex: 0 0 78px; }
-  #tab-customers .ps-wrap.cust-ps-wrap {
-    flex: 0 0 auto; margin-left: 0; font-size: 12px; gap: 3px;
-    white-space: nowrap; color: var(--muted);
-  }
-  #tab-customers .ps-wrap.cust-ps-wrap .mini-select {
-    width: 52px; height: 34px; padding: 4px 5px; font-size: 12px;
-  }
   #tab-customers .page-head { margin-bottom: 8px; }
 
   /* 移动端默认隐藏筛选区（含字段+按钮） */
@@ -2235,7 +2290,7 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
     overflow: auto;
   }
   #tab-customers .card { overflow: hidden; }  /* 防止 .card 被表格内容撑开 */
-  #tab-customers .pager { flex: 0 0 auto; padding-bottom: 16px; }
+  #tab-customers .pager { flex: 0 0 auto; padding: 8px 4px 4px; }
 
   /* 订单管理：同客户页，表格内部滚动，翻页条常驻可见 */
   #swipeTrack > #tab-orders {
@@ -2256,7 +2311,7 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
     max-height: 60dvh;
     overflow: auto;
   }
-  #tab-orders .pager { flex: 0 0 auto; padding-bottom: 8px; }
+  #tab-orders .pager { flex: 0 0 auto; padding: 8px 4px 4px; }
 }
 /* 渲染失败提示：直接显示在对应 section 顶部，移动端也能看见（而不是静默空白） */
 .render-error {
