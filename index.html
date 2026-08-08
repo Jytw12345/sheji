@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v375" />
+  <link rel="stylesheet" href="css/styles.css?v376" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -477,12 +477,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v375"></script>
-  <script defer src="js/db.js?v375"></script>
-  <script defer src="js/calc.js?v375"></script>
-  <script defer src="js/charts.js?v375"></script>
-  <script defer src="js/export.js?v375"></script>
-  <script defer src="js/app.js?v375"></script>
+  <script defer src="js/config.js?v376"></script>
+  <script defer src="js/db.js?v376"></script>
+  <script defer src="js/calc.js?v376"></script>
+  <script defer src="js/charts.js?v376"></script>
+  <script defer src="js/export.js?v376"></script>
+  <script defer src="js/app.js?v376"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）

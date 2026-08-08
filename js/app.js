@@ -2584,7 +2584,7 @@
     const no = await DB.genOrderNo();
     state.editingOrder = {
       id: null, order_no: no, title: '', customer_id: '', customer_name: '',
-      task_type: '名片', amount: 0, status: '接单', assigned_designer_id: '',
+      task_type: '名片', amount: 0, status: '接单', assigned_designer_id: (state.currentUser && state.currentUser.id) || '',
       revision_count: 0, is_finalized: false, revision_note: '',
       intake_at: new Date().toISOString(), dispatch_at: null, deadline: null,
       design_started_at: null, draft_at: null, feedback_at: null,
