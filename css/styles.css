@@ -44,6 +44,23 @@
   }
   html .btn.new-entity-btn:hover,
   html .btn-filter-toggle:hover { background: rgba(79,70,229,.28) !important; border-color: rgba(124,58,237,.6) !important; }
+  /* 订单流程推进按钮（工作台/详情）：暗色下实心主色太亮，改半透明并保留语义色相 */
+  .flow-actions .btn,
+  .wb-actions .btn { background: rgba(79,70,229,.18) !important; color: #c7d2fe !important; }
+  .flow-actions .btn:hover,
+  .wb-actions .btn:hover { background: rgba(79,70,229,.28) !important; }
+  .flow-actions .btn.ok,
+  .wb-actions .btn.ok { background: rgba(34,197,94,.18) !important; color: #86efac !important; }
+  .flow-actions .btn.ok:hover,
+  .wb-actions .btn.ok:hover { background: rgba(34,197,94,.28) !important; }
+  .flow-actions .btn.warn,
+  .wb-actions .btn.warn { background: rgba(249,115,22,.18) !important; color: #fdba74 !important; }
+  .flow-actions .btn.warn:hover,
+  .wb-actions .btn.warn:hover { background: rgba(249,115,22,.28) !important; }
+  .flow-actions .btn.danger,
+  .wb-actions .btn.danger { background: rgba(239,68,68,.18) !important; color: #fca5a5 !important; }
+  .flow-actions .btn.danger:hover,
+  .wb-actions .btn.danger:hover { background: rgba(239,68,68,.28) !important; }
   /* 主要面板/输入框在暗色下切到深色面，避免大块白色刺眼 */
   input, select, textarea,
   .btn-group .btn, .btn-mini, .mini-select, .reason-chip, .fp-copy,
@@ -1071,7 +1088,7 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
   .row > .field { flex: 1 1 100%; min-width: 0; }
   .flow-actions { padding: 8px; gap: 6px; }
   .flow-actions .btn { flex: 1 1 auto; padding: 9px 8px !important; font-size: 13px !important; }
-  .modal .row > .btn, .modal .row > button { flex: 1 1 46%; }
+  .modal .row > .btn, .modal .row > button { flex: 1 1 0; min-width: 0; }
 
   /* 触摸友好：最小点击区域，输入字号避免 iOS 聚焦缩放 */
   .btn, .btn-ghost, .tabs button, .chk, .wb-open-folder, .fp-copy { min-height: 38px; }

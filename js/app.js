@@ -3054,13 +3054,13 @@
     if (o.status === '接单') flow = '<button class="btn" data-flow="dispatch">派单（指定设计师与截稿时间）</button>';
     else if (o.status === '派单') flow = '<button class="btn" data-flow="proposal">提交提案</button>';
     else if (o.status === '提案') {
-      flow = '<button class="btn ok" data-flow="proposal_pass">提案通过（开始设计）</button>' +
+      flow = '<button class="btn ok" data-flow="proposal_pass">提案通过</button>' +
         '<button class="btn warn" data-flow="proposal_fail">提案不通过</button>';
     } else if (o.status === '提案不通过') {
       flow = '<button class="btn" data-flow="proposal_again">二次提案</button>' +
         '<button class="btn danger" data-flow="switch">换人</button>';
     } else if (o.status === '设计中') flow = '<button class="btn" data-flow="draft">提交初稿</button>';
-    else if (o.status === '初稿') flow = '<button class="btn" data-flow="feedback">等客户反馈</button>';
+    else if (o.status === '初稿') flow = '<button class="btn" data-flow="feedback">送审客户</button>';
     else if (o.status === '客户反馈') {
       flow = '<button class="btn ok" data-flow="finalize">通过（定稿）</button>' +
         '<button class="btn warn" data-flow="revise">需要修改</button>';
@@ -4505,7 +4505,7 @@
       case '提案': return b('proposal_pass', '提案通过', 'ok') + b('proposal_fail', '不通过', 'warn') + rv;
       case '提案不通过': return b('proposal_again', '二次提案', '') + b('switch', '换人', 'danger') + rv;
       case '设计中': return b('draft', '提交初稿', 'primary') + rv;
-      case '初稿': return b('feedback', '等客户反馈', 'primary') + rv;
+      case '初稿': return b('feedback', '送审客户', 'primary') + rv;
       case '客户反馈': return b('finalize', '通过（定稿）', 'ok') + b('revise', '需要修改', 'warn') + rv;
       case '修改中': return b('finalize', '客户定稿', 'ok') + b('switch', '换人', 'danger') + rv;
       case '已定稿':
