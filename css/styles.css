@@ -273,6 +273,30 @@ section.active { display: block; animation: fade .25s; }
 .team-board::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
 .team-board::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 .team-board::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+/* 设计师负荷看板（工作台「负荷」视图）：横向条形对比谁忙谁闲，辅助派单决策 */
+.load-board-head { font-size: 13px; font-weight: 600; color: var(--muted); margin: 4px 2px 10px; }
+.load-board { display: flex; flex-direction: column; gap: 10px; }
+.load-row { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.load-row:hover { border-color: var(--primary, #6366f1); box-shadow: var(--shadow); }
+.load-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.load-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.load-count { font-size: 13px; font-weight: 700; white-space: nowrap; }
+.load-count.light { color: #22c55e; }
+.load-count.medium { color: #f59e0b; }
+.load-count.heavy { color: #ef4444; }
+.load-bar-wrap { position: relative; margin-top: 8px; height: 18px; background: #eef2f7; border-radius: 9px; overflow: hidden; }
+.load-bar { height: 100%; border-radius: 9px; transition: width .4s ease; }
+.load-bar.light { background: linear-gradient(90deg, #34d399, #22c55e); }
+.load-bar.medium { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+.load-bar.heavy { background: linear-gradient(90deg, #f87171, #ef4444); }
+.load-bar-cap { position: absolute; right: 8px; top: 0; line-height: 18px; font-size: 11px; font-weight: 600; color: #475569; }
+.load-row-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; }
+.load-tag { padding: 2px 8px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
+.load-tag.ok { background: #dcfce7; color: #16a34a; }
+.load-tag.warn { background: #fef3c7; color: #d97706; }
+.load-tag.danger { background: #fee2e2; color: #dc2626; }
+.load-free { color: var(--muted); }
+.load-amt { margin-left: auto; font-weight: 700; color: var(--text); }
 .team-scroll-hint { font-size: 12px; color: var(--muted); text-align: center; padding: 6px 10px; background: #f8fafc; border: 1px dashed var(--line); border-radius: 8px; margin-bottom: 8px; user-select: none; }
 .team-scroll-hint.hide { display: none; }
 .team-col { flex: 1 0 200px; min-width: 200px; background: var(--bg, #f8fafc); border: 1px solid var(--line); border-radius: var(--radius); display: flex; flex-direction: column; max-height: calc(100vh - 240px); }

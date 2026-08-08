@@ -3771,6 +3771,7 @@
    * ============================================================ */
   function renderWorkbench() {
     if ((state.wbView || 'personal') === 'team') { renderTeamBoard(); return; }
+    if (state.wbView === 'load') { renderLoadBoard(); return; }
     const sec = $('#tab-designers');
     if (sec) sec.classList.remove('team');
     const ds = state._designers || [];
@@ -3992,7 +3993,98 @@
     updateSwipeDiag();
   }
 
-  // 点击“显示全部”→关闭自动隐藏并刷新工作台
+  // 「我的工作台 → 负荷」：设计师负荷看板。
+  // 按进行中单数（主责+协作）排序，一眼看出谁忙谁闲，辅助派单决策。
+  function renderLoadBoard() {
+    const sec = $('#tab-designers');
+    if (sec) sec.classList.add('team'); // 复用 team 模式布局（workbench-cards 铺满）
+    const ds = state._designers || [];
+    const viewAll = isViewAll();
+    let list = ds.filter(d => isActiveDesign(d));
+    if (!viewAll) {
+      list = ds.filter(d => state.currentUser && d.id === state.currentUser.id && isActiveDesign(d));
+      if (!list.length && state.currentUser) list = [state.currentUser];
+    }
+    if (!list.length) {
+      $('#workbenchStats').innerHTML = '';
+      $('#workbenchKpis').innerHTML = '';
+      $('#workbenchCards').innerHTML = '<div class="empty">暂无设计师</div>';
+      return;
+    }
+    const ACTIVE = ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案', '提案不通过'];
+    const now = Date.now();
+    const rows = list.map(d => {
+      const orders = (state._orders || []).filter(o => window.Cfg.participants(o).includes(d.id) && ACTIVE.includes(o.status));
+      let nearDue = 0, overdue = 0, amt = 0; const dls = [];
+      orders.forEach(o => {
+        amt += Number(o.amount) || 0;
+        if (!o.deadline) return;
+        const t = new Date(o.deadline).getTime();
+        if (isNaN(t)) return;
+        dls.push(t);
+        const diff = t - now;
+        if (diff < 0) overdue++;
+        else if (diff <= 24 * 3600000) nearDue++;
+      });
+      const maxDl = dls.length ? Math.max.apply(null, dls) : null;
+      return { d, activeCount: orders.length, nearDue, overdue, amt, maxDl };
+    });
+    const maxCount = Math.max.apply(null, rows.map(r => r.activeCount).concat([0]));
+    const scale = Math.max(maxCount, 5); // 条形满刻度（至少 5，避免单人时条拉满）
+    const level = (n) => n >= 5 ? 'heavy' : (n >= 3 ? 'medium' : 'light');
+    rows.sort((a, b) => (b.activeCount - a.activeCount) || (b.overdue - a.overdue) || a.d.name.localeCompare(b.d.name));
+    let html = '<div class="load-board-head">设计师负荷看板 · 按进行中单数排序（含主责与协作）</div><div class="load-board" id="loadBoard">';
+    rows.forEach(r => {
+      const pctW = scale ? Math.round(r.activeCount / scale * 100) : 0;
+      const lvl = level(r.activeCount);
+      const freeText = r.maxDl ? ('预计 ' + fmtLoadDur(r.maxDl - now) + ' 后可接新单') : '立即可接新单';
+      const tags = [];
+      if (r.overdue) tags.push('<span class="load-tag danger">🔴 超期 ' + r.overdue + '</span>');
+      if (r.nearDue) tags.push('<span class="load-tag warn">⏳ 临期 ' + r.nearDue + '</span>');
+      html += '<div class="load-row" data-load-id="' + r.d.id + '">' +
+        '<div class="load-row-top">' +
+          '<span class="load-name">' + esc(r.d.name) + '</span>' +
+          '<span class="load-count ' + lvl + '">' + r.activeCount + ' 单进行中</span>' +
+        '</div>' +
+        '<div class="load-bar-wrap"><div class="load-bar ' + lvl + '" style="width:' + pctW + '%"></div>' +
+          '<span class="load-bar-cap">' + r.activeCount + ' / ' + scale + '</span></div>' +
+        '<div class="load-row-foot">' +
+          (tags.length ? tags.join('') : '<span class="load-tag ok">✓ 无临期/超期</span>') +
+          '<span class="load-free">' + freeText + '</span>' +
+          '<span class="load-amt">¥' + money(r.amt) + '</span>' +
+        '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+    $('#workbenchStats').innerHTML = '';
+    $('#workbenchKpis').innerHTML = '';
+    $('#workbenchCards').innerHTML = html;
+    bindLoadBoard();
+    applyPermissions();
+    updateSwipeDiag();
+  }
+
+  // 负荷看板：点击某设计师行 → 下钻到该设计师个人视图
+  function bindLoadBoard() {
+    $$('#loadBoard .load-row').forEach(r => r.addEventListener('click', () => {
+      const id = r.dataset.loadId;
+      state.wbView = 'personal';
+      state.currentDesignerId = id;
+      $$('#wbViewToggle .wb-view-btn').forEach(x => x.classList.toggle('active', x.dataset.view === 'personal'));
+      renderWorkbench();
+    }));
+  }
+
+  // 毫秒 → “X 天 Y 时 / Y 时 Z 分 / Z 分”
+  function fmtLoadDur(ms) {
+    const absMin = Math.max(0, Math.round(Math.abs(ms) / 60000));
+    const d = Math.floor(absMin / 1440), h = Math.floor((absMin % 1440) / 60), m = absMin % 60;
+    if (d > 0) return d + ' 天 ' + h + ' 时';
+    if (h > 0) return h + ' 时 ' + m + ' 分';
+    return m + ' 分';
+  }
+
+  // 点击"显示全部"→关闭自动隐藏并刷新工作台
   function bindShowArchived() {
     const link = $('#wbShowArchived');
     if (!link) return;
