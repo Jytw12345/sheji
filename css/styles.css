@@ -27,6 +27,23 @@
     --line: #273449;
     --shadow: 0 1px 3px rgba(0,0,0,.25), 0 8px 24px rgba(0,0,0,.32);
   }
+  /* 底栏选中态：暗色下改用半透明紫 + 亮紫字，避免浅紫块刺眼 */
+  .tabs button.active { background: rgba(79,70,229,.22) !important; color: #c7d2fe !important; }
+  /* 分页「每页 N 条」按钮：暗色下不用浅紫实底，改用半透明紫 */
+  .btn.page-size-btn,
+  .pager .btn.page-size-btn { background: rgba(79,70,229,.18) !important; color: #c7d2fe !important; }
+  .btn.page-size-btn:hover,
+  .pager .btn.page-size-btn:hover { background: rgba(79,70,229,.28) !important; }
+  .page-size-pop-item:active { background: #1e293b !important; }
+  .page-size-pop-item.active { background: rgba(79,70,229,.25) !important; color: #c7d2fe !important; }
+  /* 新建订单/新建客户/筛选按钮：暗色下不用白/浅紫底，改用半透明紫，与底栏选中态统一 */
+  html .btn.new-entity-btn,
+  html .btn-filter-toggle {
+    background: rgba(79,70,229,.18) !important; color: #c7d2fe !important;
+    border-color: rgba(124,58,237,.45) !important;
+  }
+  html .btn.new-entity-btn:hover,
+  html .btn-filter-toggle:hover { background: rgba(79,70,229,.28) !important; border-color: rgba(124,58,237,.6) !important; }
   /* 主要面板/输入框在暗色下切到深色面，避免大块白色刺眼 */
   input, select, textarea,
   .btn-group .btn, .btn-mini, .mini-select, .reason-chip, .fp-copy,
@@ -165,6 +182,8 @@ a { color: var(--primary); }
   color: #fff; box-shadow: var(--shadow);
   padding: 10px 20px;
 }
+/* 开启 viewport-fit=cover 后，刘海/状态栏区域会暴露，标题栏顶部预留安全区 */
+.topbar { padding-top: max(10px, env(safe-area-inset-top)) !important; }
 .topbar-main {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap;
