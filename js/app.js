@@ -6416,8 +6416,9 @@
       // 而 renderDashboard 是 async 函数（await ensureChartLib + dashboardSummary），
       // 其 await 期间 init() 的 loadData 抢先执行 → state 被清空 → 用户看到短暂空白。
       renderDashboard().then(() => {
-        // 缓存仪表盘渲染完成，启动后台 init
-        init().catch(e => console.warn('后台刷新异常，保留缓存视图', e));
+        // 缓存仪表盘渲染完成，后台 init（套 25s 兜底，但 showRetry=false：
+        // 首屏已即时揭开，挂起时无需弹重试，仅记录，用户仍可见缓存数据）。
+        safeInit(false);
       }).catch(e => console.warn('缓存仪表盘渲染失败（后台刷新会补齐）', e));
       return;
     }
@@ -6438,32 +6439,37 @@
       state._groups = state._groups || [];
       // 后台静默渲染（Splash 仍盖在上面，用户看不到空白），数据就绪后由 afterLogin 揭开
       renderDashboard().catch(e => console.warn('预渲染仪表盘失败', e));
-      init().catch(e => {
-        console.warn('后台刷新异常', e);
-        try { hideSplash(); } catch (_) {}   // 异常时强制揭开，不让用户永远看 Splash
-      });
+      // 【修复长后台白屏】已登录但无/残缺缓存路径：init() 内 DB.reload / 会话刷新可能卡在
+      // 冷 Radio 建连（8~30s）甚至挂起。套用 25s 最外层兜底 + 重试浮层（与 networkBoot 一致），
+      // 否则 hideSplash 永不被调用 → 永久卡在启动画面（白屏）。
+      safeInit(true);
       return;
     }
     networkBoot();
   }
-  // 原启动链路（首装/清缓存/未登录走这里）：保留 25s 最外层兜底防长后台卡死
-  function networkBoot() {
+  // 最外层兜底：25s 超时强制揭开首屏 + 可选「点击重试」浮层。
+  // 防「长后台冷启动」卡死（v429 铁律：正确兜底只有最外层 25s 超时 + 重试浮层，
+  // 绝不在正常路径塞 per-call 超时；25s 远大于正常网络耗时 <2s，日常永远碰不到）。
+  // showRetry=true → 超时/异常时弹「点击重试」；=false → 仅强制揭首屏+记录（用于已即时上屏的 Path A）。
+  function safeInit(showRetry) {
     let settled = false;
     const emergencyTimer = setTimeout(() => {
       if (settled) return;
-      console.error('[boot] 启动超时兜底：强制关闭首屏并提示重试');
-      try { hideSplash(); } catch (e) {}
-      showBootRetry();
+      console.error('[boot] 启动超时兜底：强制关闭首屏' + (showRetry ? '并提示重试' : ''));
+      try { hideSplash(); } catch (e) {}   // hideSplash 幂等：Path A 已揭过则无副作用
+      if (showRetry) showBootRetry();
     }, 25000);
     Promise.resolve().then(async () => {
       try { await init(); }
       catch (e) {
         console.error('[boot] 初始化异常', e);
         try { hideSplash(); } catch (_) {}
-        showBootRetry();
+        if (showRetry) showBootRetry();
       }
     }).finally(() => { settled = true; clearTimeout(emergencyTimer); });
   }
+  // 原启动链路（首装/清缓存/未登录走这里）：25s 最外层兜底防长后台卡死
+  function networkBoot() { safeInit(true); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootApp);
   else bootApp();
 })();
