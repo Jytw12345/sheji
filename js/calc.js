@@ -422,9 +422,11 @@ window.Calc = (function () {
       const smallCount = finalizedMine.filter(isSmall).length;
       const smallOk = smallCount >= target;
 
-      // 营收：仅主负责人计（协同不重复计营收）
-      const rev = effectiveMine.filter(o => o.assigned_designer_id === d.id)
-        .reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
+      // 营收：按参与人分成（主负责人拿剩余，每个协作设计师各分 collab_share_ratio）
+      const rev = effectiveMine.reduce((sum, o) => {
+        const split = window.Cfg.revenueSplit(o, s);
+        return sum + (split[d.id] || 0);
+      }, 0);
 
       return {
         designerId: d.id, designerName: d.name || '未命名', role: d.role,

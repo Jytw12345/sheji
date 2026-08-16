@@ -2057,13 +2057,15 @@
     });
   }
 
-  /* 校验「取消订单」原因：至少 4 个字，且不能仅用数字（含中文数字）替代，必须含文字说明 */
-  function validCancelReason(s) {
+  /* 校验「原因」：至少 4 个字，且不能仅用数字（含中文数字）替代，必须含文字说明。
+     通用：取消订单 / 删除订单 / 删除客户 等需留痕操作共用。 */
+  function validReason(s, label) {
+    label = label || '原因';
     const CN_DIGITS = '零〇一二三四五六七八九十百千万两';
     const t = (s || '').trim();
-    if (t.length < 4) return '取消原因至少需填写 4 个字';
+    if (t.length < 4) return label + '至少需填写 4 个字';
     const core = t.split('').filter(c => !/[0-9]/.test(c) && !CN_DIGITS.includes(c) && !/\s/.test(c)).join('');
-    if (core.length < 2) return '取消原因不能仅用数字替代，请填写文字说明';
+    if (core.length < 2) return label + '不能仅用数字替代，请填写文字说明';
     return null;
   }
 
@@ -2647,8 +2649,8 @@
       return s && s !== '0' ? s : '设计师' + (i + 1);
     });
     const revenue = ds.map(d => {
-      const mine = sum.orders.filter(o => o.assigned_designer_id === d.designerId && window.Calc.inWindow(o, win));
-      return mine.reduce((s, o) => s + (Number(o.amount) || 0), 0);
+      return sum.orders.filter(o => window.Cfg.participants(o).includes(d.designerId) && window.Calc.inWindow(o, win))
+        .reduce((s, o) => s + (window.Cfg.revenueSplit(o, state._settings || {})[d.designerId] || 0), 0);
     });
     Charts.bar($('#chartPerf'), {
       title: '设计师业绩（' + periodLabel + '应收）', horizontal: true,
@@ -2734,7 +2736,7 @@
     let list = await DB.listOrders(state.filters || {});
     if (!isViewAll() && state.currentUser) {
       const me = state.currentUser.id;
-      list = list.filter(o => window.Cfg.participants(o).includes(me));
+      list = list.filter(o => window.Cfg.participants(o).includes(me) || tempAssistIds(o).includes(me));
     }
     let orders = list;
     // 列排序（默认按接单时间倒序）
@@ -2757,8 +2759,11 @@
       const cat = window.Cfg.orderCategory(Number(o.amount) || 0, state._settings);
       const collabNames = (Array.isArray(o.collab_designer_ids) ? o.collab_designer_ids : [])
         .map(id => dsMap[id]).filter(Boolean);
+      const taNames = (Array.isArray(o.temp_assist_log) ? o.temp_assist_log : [])
+        .map(r => r && r.name).filter(Boolean);
       const designerCell = (esc(dsMap[o.assigned_designer_id]) || softBadge('#64748b', '未派')) +
-        (collabNames.length ? ' <span class="collab-tag">+' + collabNames.map(esc).join('/') + '</span>' : '');
+        (collabNames.length ? ' <span class="collab-tag">+' + collabNames.map(esc).join('/') + '</span>' : '') +
+        (taNames.length ? ' <span class="collab-tag ta-tag">🤝' + taNames.map(esc).join('/') + '</span>' : '');
       const reworkCell = o.rework_category
         ? ' <span class="badge ' + (o.rework_category === '设计原因' ? 'bad' : 'warn') + '">' + esc(o.rework_category) + '</span>' : '';
       return '<tr data-id="' + o.id + '">' +
@@ -3343,7 +3348,7 @@
   //  - 备注 / 文件路径 / 设计稿路径 / 投诉记录：永不锁定（交付后常需补录、投诉）
   const LOCK_MID = ['派单', '提案', '提案不通过', '设计中', '初稿', '客户反馈', '修改中'];
   function orderLockRules(status) {
-    if (LOCK_MID.includes(status)) return { level: 'mid', locked: new Set(['designer', 'collab']) };
+    if (LOCK_MID.includes(status)) return { level: 'mid', locked: new Set(['designer']) };
     if (status === '已定稿') return { level: 'terminal', locked: new Set(['designer', 'collab', 'customer', 'amount', 'type', 'title', 'deadline']) };
     if (status === '已换人') return { level: 'switched', locked: new Set(['designer', 'collab']) };
     return { level: 'open', locked: new Set() };
@@ -3364,6 +3369,8 @@
     const lock = (el) => { if (!el) return; el.disabled = true; el.classList.add('locked'); };
     if (rules.locked.has('designer')) {
       lock(document.getElementById('oDesigner'));
+    }
+    if (rules.locked.has('collab')) {
       $$('#modalBox .oCollab').forEach(c => { c.disabled = true; c.classList.add('locked'); });
     }
     if (rules.locked.has('customer')) {
@@ -3387,6 +3394,9 @@
     const ds = state._designers || [], cs = state._customers || [];
     const customerText = (cs.find(c => c.id === o.customer_id) || {}).name || '';
     const collabIds = Array.isArray(o.collab_designer_ids) ? o.collab_designer_ids : [];
+    const settingsDef = state._settings || {};
+    const collabShareDefault = Number(settingsDef.collab_share_default) || 0.3;
+    const collabShareVal = (o && Number(o.collab_share_ratio) > 0) ? Number(o.collab_share_ratio) : collabShareDefault;
     const otherDs = ds.filter(d => d.id !== o.assigned_designer_id && (isActiveDesign(d) || collabIds.includes(d.id)));
     const collabHtml = otherDs.map(d =>
       '<label class="chk"><input type="checkbox" class="oCollab" value="' + d.id + '"' +
@@ -3480,11 +3490,34 @@
             <div class="field dl-des"><label>派单设计师</label><select id="oDesigner"${dDesigner}><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
             <div class="field collab-field"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><div class="chips">${collabHtml ? collabHtml.replace(/class="oCollab"/g, 'class="oCollab"' + dCollab) : '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
           </div>
+          <div class="dl-row collab-share-row">
+            <label class="collab-share-label">协作分成比例</label>
+            <div style="display:inline-flex;align-items:center;gap:6px">
+              <input type="number" id="collabShare" min="0" max="1" step="0.05" value="${collabShareVal}"${dCollab} placeholder="如 0.3" style="width:70px" /> <span class="muted">默认 ${Math.round(collabShareDefault * 100)}%</span>
+            </div>
+          </div>
           <div class="dl-row deadline-row" style="margin-top:8px">
             ${dl.fields}
             <div class="dl-presets"><label>快捷</label><div class="chips">${dl.presets.map(p => '<button type="button" class="chip" data-dl-preset="' + p[1] + '"' + dDeadline + '>' + p[0] + '</button>').join('')}</div></div>
           </div>
           <div id="oDeadlineWarn" class="dl-warn"></div>
+        </div>
+
+        <div class="form-section">
+          <div class="form-sec-title">临时协助记录 <span class="muted" style="font-weight:400;font-size:11px">（临时替班/帮忙，仅留痕，不计入业绩）</span></div>
+          <div id="tempAssistList" class="temp-assist-list">${tempAssistHtml(o)}</div>
+          <button type="button" class="btn sm secondary" id="oAddAssist">＋ 添加协助</button>
+          <div id="tempAssistForm" class="temp-assist-form" style="display:none;margin-top:8px">
+            <div class="grid2-sm">
+              <div class="field"><label>协助设计师</label><select id="taDesigner">${ds.filter(d => isActiveDesign(d) || tempAssistIds(o).includes(d.id)).map(d => '<option value="' + d.id + '">' + esc(d.name) + '</option>').join('')}</select></div>
+              <div class="field"><label>日期</label><input type="date" id="taDate" value="${todayStr()}"></div>
+            </div>
+            <div class="field" style="margin-top:6px"><label>备注（可选）</label><input id="taNote" placeholder="如：A 休班，帮忙改了初稿" maxlength="60"></div>
+            <div style="margin-top:8px">
+              <button type="button" class="btn sm" id="taConfirm">确认</button>
+              <button type="button" class="btn sm ghost" id="taCancel">取消</button>
+            </div>
+          </div>
         </div>
 
         <div class="form-section">
@@ -3687,6 +3720,41 @@
     // 修改次数：流程自动累计 + 手动补记（修改中反复修改时可 +1）
     const rInc = $('#modalBox [data-revision="inc"]');
     if (rInc) rInc.addEventListener('click', () => addRevisionModal());
+    // 临时协助记录：添加 / 删除（不受订单锁定状态影响，任何阶段可记，保存订单时一并入库）
+    if (!Array.isArray(state.editingOrder.temp_assist_log)) state.editingOrder.temp_assist_log = [];
+    const taAdd = $('#oAddAssist');
+    if (taAdd) taAdd.addEventListener('click', () => {
+      const f = $('#tempAssistForm');
+      if (f) f.style.display = (f.style.display === 'none' || !f.style.display) ? '' : 'none';
+    });
+    const taCancel = $('#taCancel');
+    if (taCancel) taCancel.addEventListener('click', () => { const f = $('#tempAssistForm'); if (f) f.style.display = 'none'; });
+    const taConfirm = $('#taConfirm');
+    if (taConfirm) taConfirm.addEventListener('click', () => {
+      const did = $('#taDesigner') ? $('#taDesigner').value : '';
+      if (!did) { toast('请选择协助设计师'); return; }
+      const d = (state._designers || []).find(x => x.id === did);
+      const entry = {
+        did,
+        name: d ? d.name : '',
+        date: ($('#taDate') ? $('#taDate').value : '') || todayStr(),
+        note: ($('#taNote') ? ($('#taNote').value || '').trim() : '')
+      };
+      state.editingOrder.temp_assist_log = (state.editingOrder.temp_assist_log || []).concat(entry);
+      state.editingOrder._dirty = true;
+      const list = $('#tempAssistList'); if (list) list.innerHTML = tempAssistHtml(state.editingOrder);
+      const f = $('#tempAssistForm'); if (f) f.style.display = 'none';
+      if ($('#taNote')) $('#taNote').value = '';
+      toast('已记录临时协助（点「保存信息」后生效）');
+    });
+    $$('#modalBox [data-ta-del]').forEach(b => b.addEventListener('click', () => {
+      const i = Number(b.dataset.taDel);
+      const log = (state.editingOrder.temp_assist_log || []).slice();
+      log.splice(i, 1);
+      state.editingOrder.temp_assist_log = log;
+      state.editingOrder._dirty = true;
+      const list = $('#tempAssistList'); if (list) list.innerHTML = tempAssistHtml(state.editingOrder);
+    }));
     // 素材文件路径：实时预览 + 点击打开/复制
     const fpEl = $('#oFilePaths');
     if (fpEl) {
@@ -4022,7 +4090,7 @@
       while (true) {
         const r = await uiInput('客户取消 / 终止此订单', '请填写取消原因（至少 4 个字，需含文字说明，不可用数字替代；如：客户预算不足 / 需求变更 / 长期无反馈）', true);
         if (r === null) return; // 用户取消输入
-        const err = validCancelReason(r);
+        const err = validReason(r, '取消原因');
         if (err) { toast(err); continue; }
         reason = r;
         break;
@@ -4312,6 +4380,10 @@
     o.file_paths = ($('#oFilePaths').value || '').split('\n').map(l => normalizePath(l)).filter(Boolean);
     o.design_paths = ($('#oDesignPaths').value || '').split('\n').map(l => normalizePath(l)).filter(Boolean);
     o.collab_designer_ids = $$('#modalBox .oCollab').filter(c => c.checked).map(c => c.value);
+    // 协作分成比例：读取输入框（仅当该单有协作设计师时生效；无协作则比例无意义，归位默认）
+    const collabShareRaw = $('#collabShare') ? Number($('#collabShare').value) : NaN;
+    o.collab_share_ratio = (o.collab_designer_ids.length && isFinite(collabShareRaw) && collabShareRaw >= 0 && collabShareRaw <= 1)
+      ? collabShareRaw : (state._settings && Number(state._settings.collab_share_default) || 0.3);
     // 注意：所有流程时间戳（intake_at / dispatch_at / proposal_at / proposal_failed_at /
     // proposal_pass_at / design_started_at / draft_at / feedback_at / feedback_failed_at /
     // revision_at / redraft_at / finalized_at / switched_at）均不再从表单读取，
@@ -4467,9 +4539,18 @@
     if (!lockOp('delOrder:' + id)) return;   // 防重复点击（连点/双击）
     const o = (state._orders || []).find(x => x.id === id);
     const label = o && o.order_no ? '「' + o.order_no + '」' : '';
-    if (!(await uiConfirm('确认将该订单' + label + '移入回收站？可在「设置 → 回收站」中还原。'))) { unlockOp('delOrder:' + id); return; }
+    // 删除订单需填写原因（与取消订单一致，留痕可复盘）；移入回收站可还原
+    let reason = null;
+    while (true) {
+      const r = await uiInput('删除订单（移入回收站）' + label,
+        '请填写删除原因（至少 4 个字，需含文字说明，不可用数字替代；如：信息重复 / 录入错误 / 客户要求撤销）。可在「设置 → 回收站」中还原。', true);
+      if (r === null) { unlockOp('delOrder:' + id); return; }  // 用户取消输入 → 中止删除
+      const err = validReason(r, '删除原因');
+      if (err) { toast(err); continue; }
+      reason = r; break;
+    }
     try {
-      await DB.deleteOrder(id); logOp('删除订单', '订单', id);
+      await DB.deleteOrder(id, reason); logOp('删除订单', '订单', id, o && o.order_no || '', reason);
       closeModal(true);
       renderOrders();           // 立即乐观重渲染（cache 已无该单），不等 loadAll 网络往返，避免“删了还显示”
       await refreshAll();       // 后台静默同步云端
@@ -4481,6 +4562,20 @@
   /* ============================================================
    * 工作台（个人订单卡片视图）
    * ============================================================ */
+  // 临时协助记录：返回订单 temp_assist_log 里的设计师 id 列表（用于展示/过滤，不参与任何统计）
+  function tempAssistIds(o) {
+    return (o && Array.isArray(o.temp_assist_log)) ? o.temp_assist_log.map(r => r && r.did).filter(Boolean) : [];
+  }
+  function tempAssistHtml(o) {
+    const log = (o && Array.isArray(o.temp_assist_log)) ? o.temp_assist_log : [];
+    if (!log.length) return '<div class="muted" style="font-size:12px">暂无临时协助记录</div>';
+    return log.map((r, i) =>
+      '<div class="ta-item"><span>🤝 ' + esc(r.name || '未知') + ' · ' + esc(r.date || '') +
+      (r.note ? ' · ' + esc(r.note) : '') + '</span>' +
+      '<button type="button" class="btn-mini ta-del" data-ta-del="' + i + '" title="删除此条">×</button></div>'
+    ).join('');
+  }
+  function todayStr() { return new Date().toISOString().slice(0, 10); }
   function renderWorkbench() {
     if ((state.wbView || 'personal') === 'team') { renderTeamBoard(); return; }
     if (state.wbView === 'load') { renderLoadBoard(); return; }
@@ -4520,6 +4615,9 @@
     const fPeriod = $('#wbPeriod') ? $('#wbPeriod').value : '';
     const now = new Date();
     let cardOrders = orders.slice();
+    // 临时协助订单也展示给协助设计师（便于打开修改），但 `orders`（统计口径）仍只含 participants，故不计入任何业绩
+    const taOrders = (state._orders || []).filter(o => d && tempAssistIds(o).includes(d.id) && !window.Cfg.participants(o).includes(d.id));
+    cardOrders = cardOrders.concat(taOrders);
     if (fStatus === 'active') cardOrders = cardOrders.filter(o => ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案'].includes(o.status));
     else if (fStatus) cardOrders = cardOrders.filter(o => o.status === fStatus);
     if (fPeriod) {
@@ -4596,8 +4694,10 @@
       }
     });
     const avgCycle = cycN ? cycSum / cycN : 0;
-    const revenue = orders.filter(o => o.assigned_designer_id === d.id)
-      .reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
+    const revenue = orders.reduce((sum, o) => {
+      const split = window.Cfg.revenueSplit(o, state._settings || {});
+      return sum + (split[d.id] || 0);
+    }, 0);
 
     const mk = (icon, value, label, accent) =>
       '<div class="kpi wb-mk-compact" data-accent="' + (accent || '#6366f1') + '">' +
@@ -4686,7 +4786,7 @@
     const ACTIVE = ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案', '提案不通过'];
     let html = '<div class="team-scroll-hint" id="teamScrollHint">← 左右滑动 / 滚动查看更多设计师 →</div><div class="team-board" id="teamBoard">';
     list.forEach(d => {
-      const orders = (state._orders || []).filter(o => window.Cfg.participants(o).includes(d.id) && ACTIVE.includes(o.status));
+      const orders = (state._orders || []).filter(o => (window.Cfg.participants(o).includes(d.id) || tempAssistIds(o).includes(d.id)) && ACTIVE.includes(o.status));
       orders.sort((a, b) => (b.intake_at || '').localeCompare(a.intake_at || ''));
       const cards = orders.length
         ? orders.map(o => teamBoardCard(o, d)).join('')
@@ -4726,7 +4826,7 @@
     const ACTIVE = ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案', '提案不通过'];
     const now = Date.now();
     const rows = list.map(d => {
-      const orders = (state._orders || []).filter(o => window.Cfg.participants(o).includes(d.id) && ACTIVE.includes(o.status));
+      const orders = (state._orders || []).filter(o => (window.Cfg.participants(o).includes(d.id) || tempAssistIds(o).includes(d.id)) && ACTIVE.includes(o.status));
       let nearDue = 0, overdue = 0, amt = 0; const dls = [];
       orders.forEach(o => {
         amt += Number(o.amount) || 0;
@@ -4863,7 +4963,9 @@
   function workbenchCard(o, designer) {
     const dsMap = Object.fromEntries((state._designers || []).map(d => [d.id, d.name]));
     const isMeMain = o.assigned_designer_id === designer.id;
-    const roleTag = isMeMain ? '<span class="card-role main">负责人</span>' : '<span class="card-role collab">协作者</span>';
+    const isMeCollab = Array.isArray(o.collab_designer_ids) && o.collab_designer_ids.includes(designer.id);
+    const isMeTA = tempAssistIds(o).includes(designer.id);
+    const roleTag = isMeMain ? '<span class="card-role main">负责人</span>' : isMeCollab ? '<span class="card-role collab">协作</span>' : isMeTA ? '<span class="card-role ta">临时协助</span>' : '<span class="card-role collab">协作</span>';
     const FLOW = window.Cfg.FLOW;
     const curIdx = FLOW.indexOf(o.status);
     const totalSteps = FLOW.length;
@@ -4897,6 +4999,8 @@
     const mainOwnerLine = isMeMain
       ? '<div class="wb-row wb-client-type">' + clientPart + '<b>类型：</b>' + esc(o.task_type) + '</div>'
       : '<div class="wb-row wb-client-type">' + clientPart + '<b>类型：</b>' + esc(o.task_type) + ' · <b>主负责人：</b>' + esc(dsMap[o.assigned_designer_id] || '未派') + '</div>';
+    const myTa = (o.temp_assist_log || []).filter(r => r.did === designer.id);
+    const taLine = myTa.length ? '<div class="wb-ta-line">🤝 临时协助：' + myTa.map(r => esc(r.date || '') + (r.note ? ' ' + esc(r.note) : '')).join('；') + '</div>' : '';
     return `
       <div class="wb-card ${dl.cardClass}">
         <div class="wb-head-ring">
@@ -4917,6 +5021,7 @@
         ${dl.badge ? '<div class="wb-dl-row">' + dl.badge + '</div>' : ''}
         <div class="wb-body">
           ${mainOwnerLine}
+          ${taLine}
           <div class="wb-timeline">${timelineSummary}</div>
           ${o.file_paths && o.file_paths.length ? '<div class="wb-files">📂 素材：' + o.file_paths.map(p => '<a class="wb-fp" data-openfolder="' + esc(p) + '" title="' + esc(p) + '">' + esc(p.split('/').pop() || p) + '</a>').join(' ') + ' <button class="wb-open-folder" data-fpcopy="' + esc(o.file_paths.join('\n')) + '">复制路径</button></div>' : ''}
           ${(o.design_paths && o.design_paths.length) ? '<div class="wb-design"><span class="wb-design-lbl">🎨 设计稿：</span>' + o.design_paths.map(p => '<a class="wb-fp" data-openfolder="' + esc(p) + '" title="' + esc(p) + '">' + esc(p.split('/').pop() || p) + '</a>').join(' ') + ' <button class="wb-open-folder" data-fpcopy="' + esc(o.design_paths.join('\n')) + '">复制路径</button></div>' : ''}
@@ -4932,7 +5037,9 @@
   function teamBoardCard(o, designer) {
     const dsMap = Object.fromEntries((state._designers || []).map(d => [d.id, d.name]));
     const isMeMain = o.assigned_designer_id === designer.id;
-    const roleTag = isMeMain ? '<span class="card-role main">负责人</span>' : '<span class="card-role collab">协作</span>';
+    const isMeCollab = Array.isArray(o.collab_designer_ids) && o.collab_designer_ids.includes(designer.id);
+    const isMeTA = tempAssistIds(o).includes(designer.id);
+    const roleTag = isMeMain ? '<span class="card-role main">负责人</span>' : isMeCollab ? '<span class="card-role collab">协作</span>' : isMeTA ? '<span class="card-role ta">临时协助</span>' : '<span class="card-role collab">协作</span>';
     const FLOW = window.Cfg.FLOW;
     const curIdx = FLOW.indexOf(o.status);
     const totalSteps = FLOW.length;
@@ -4946,6 +5053,8 @@
     const statusPill = softBadge(statusCfg.color || '#64748b', esc(statusCfg.label || o.status));
     const sameAsTitle = (o.customer_name || '').trim() === (o.title || '').trim();
     const clientPart = sameAsTitle ? '' : esc(o.customer_name || '—') + ' · ';
+    const myTa = (o.temp_assist_log || []).filter(r => r.did === designer.id);
+    const taLine = myTa.length ? '<div class="wb-ta-line">🤝 临时协助：' + myTa.map(r => esc(r.date || '') + (r.note ? ' ' + esc(r.note) : '')).join('；') + '</div>' : '';
     return `
       <div class="team-card ${dl.cardClass}" data-open="${o.id}" title="点击查看详情">
         <div class="team-card-head">
@@ -4955,6 +5064,7 @@
         <div class="team-progress"><div class="team-progress-bar" style="width:${progress}%;background:${color}"></div><span>${progress}%</span></div>
         <div class="team-client">${clientPart}${esc(o.task_type)}</div>
         ${dl.badge ? '<div class="team-dl">' + dl.badge + '</div>' : ''}
+        ${taLine}
       </div>`;
   }
 
@@ -5484,8 +5594,17 @@
     if (!lockOp('delCustomer:' + cid)) return;
     try {
       const cn = (state._customers || []).find(x => x.id === cid);
-      if (!(await uiConfirm('确认将客户' + (cn ? '「' + cn.name + '」' : '') + '移入回收站？可在「设置 → 回收站」中还原。'))) return;
-      await DB.deleteCustomer(cid); logOp('删除客户', '客户', cid, cn ? cn.name : '');
+      // 删除客户需填写原因（与取消订单一致，留痕可复盘）；移入回收站可还原
+      let reason = null;
+      while (true) {
+        const r = await uiInput('删除客户（移入回收站）' + (cn ? '「' + cn.name + '」' : ''),
+          '请填写删除原因（至少 4 个字，需含文字说明，不可用数字替代；如：信息重复 / 录入错误 / 客户长期无合作）。可在「设置 → 回收站」中还原。', true);
+        if (r === null) { unlockOp('delCustomer:' + cid); return; }  // 用户取消输入 → 中止删除
+        const err = validReason(r, '删除原因');
+        if (err) { toast(err); continue; }
+        reason = r; break;
+      }
+      await DB.deleteCustomer(cid, reason); logOp('删除客户', '客户', cid, cn ? cn.name : '', reason);
       toast('已删除'); state.customerPage = 1;
       renderCustomers();        // 立即乐观重渲染（cache 已无该客户），避免“删了还显示”
       await refreshAll();       // 后台静默同步云端
@@ -5873,6 +5992,7 @@
     $('#sSmallMax').value = v('small_order_max', 300);
     $('#sLargeMin').value = v('large_order_min', 2000);
     $('#sBase').value = v('base_perf_salary', 2000);
+    $('#sCollabShare').value = v('collab_share_default', 0.3);
     $('#sTa1').value = v('team_award_t1', 40000); $('#sAa1').value = v('team_award_a1', 300);
     $('#sTa2').value = v('team_award_t2', 50000); $('#sAa2').value = v('team_award_a2', 500);
     $('#sTarget').value = v('small_order_target', 3);
@@ -5935,9 +6055,9 @@
       const rows = [];
       const ordersAll = state._orders || [];
       const designersAll = state._designers || [];
-      (ods || []).forEach(o => rows.push({ type: '订单', table: 'orders', id: o.id, title: (o.order_no || '') + ' ' + (o.title || ''), deleted_at: o.deleted_at, raw: o }));
-      (cs || []).forEach(c => rows.push({ type: '客户', table: 'customers', id: c.id, title: c.name || '', deleted_at: c.deleted_at, raw: c, meta: ordersAll.filter(o => o.customer_id === c.id).length + ' 个关联订单' }));
-      (gs || []).forEach(g => rows.push({ type: '分组', table: 'groups', id: g.id, title: g.name || '', deleted_at: g.deleted_at, raw: g, meta: designersAll.filter(d => d.group_id === g.id).length + ' 名设计师' }));
+      (ods || []).forEach(o => rows.push({ type: '订单', table: 'orders', id: o.id, title: (o.order_no || '') + ' ' + (o.title || ''), deleted_at: o.deleted_at, raw: o, reason: o.delete_reason || '' }));
+      (cs || []).forEach(c => rows.push({ type: '客户', table: 'customers', id: c.id, title: c.name || '', deleted_at: c.deleted_at, raw: c, reason: c.delete_reason || '', meta: ordersAll.filter(o => o.customer_id === c.id).length + ' 个关联订单' }));
+      (gs || []).forEach(g => rows.push({ type: '分组', table: 'groups', id: g.id, title: g.name || '', deleted_at: g.deleted_at, raw: g, reason: g.delete_reason || '', meta: designersAll.filter(d => d.group_id === g.id).length + ' 名设计师' }));
       if (!rows.length) { box.innerHTML = '<div class="empty">回收站为空</div>'; return; }
       box.innerHTML = '<table class="tbl"><thead><tr><th>类型</th><th>名称</th><th>删除时间</th><th>操作</th></tr></thead><tbody>' +
         rows.map(r => {
@@ -5960,7 +6080,8 @@
             if (o.revision_count) parts.push(o.revision_count + ' 次修订');
             meta = parts.length ? parts.join(' · ') : '无附加数据';
           }
-          const metaHtml = meta ? '<div class="rc-meta">' + esc(meta) + '</div>' : '';
+          const metaHtml = (meta ? '<div class="rc-meta">' + esc(meta) + '</div>' : '')
+            + (r.reason ? '<div class="rc-reason">' + esc('删除原因：' + r.reason) + '</div>' : '');
           return '<tr><td>' + r.type + '</td><td>' + esc(r.title) + metaHtml + '</td><td>' + (r.deleted_at ? fmtTime(r.deleted_at) : '—') + '</td><td>' +
             (canRestore ? '<button class="btn sm" data-restore="' + r.table + '|' + r.id + '">还原</button>' : '') +
             (canPurge ? '<button class="btn sm danger" data-purge="' + r.table + '|' + r.id + '" style="margin-left:10px">彻底删除</button>' : '') +
@@ -6092,6 +6213,7 @@
       await DB.saveSettings({
         small_order_max: num('#sSmallMax'), large_order_min: num('#sLargeMin'),
         base_perf_salary: num('#sBase'), team_award_t1: num('#sTa1'), team_award_a1: num('#sAa1'),
+        collab_share_default: (() => { const x = Number($('#sCollabShare').value); return (isFinite(x) && x >= 0 && x <= 1) ? x : 0.3; })(),
         team_award_t2: num('#sTa2'), team_award_a2: num('#sAa2'),
         small_order_target: num('#sTarget') || 3,
         win_start_day: clampDay('#sWinStart', 26), win_end_day: clampDay('#sWinEnd', 25),

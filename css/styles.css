@@ -119,6 +119,13 @@
   .wb-dl-badge.neutral { background: #1a2332 !important; color: #94a3b8 !important; }
   .card-role.main { background: #2e1065 !important; color: #c4b5fd !important; }
   .card-role.collab { background: #1a2332 !important; color: #94a3b8 !important; }
+  .card-role.ta { background: #134e4a !important; color: #5eead4 !important; }
+  .wb-ta-line { color: #5eead4 !important; background: #0c2b29 !important; border-left-color: #14b8a6 !important; }
+  .collab-tag.ta-tag { background: #134e4a !important; color: #5eead4 !important; }
+  .temp-assist-form { background: #0f1629 !important; border-color: var(--line) !important; }
+  .temp-assist-form .field select, .temp-assist-form .field input { background: #0f1629 !important; color: var(--ink) !important; border-color: var(--line) !important; }
+  .ta-item { background: #0f1629 !important; border-color: var(--line) !important; color: var(--ink) !important; }
+  .ta-del:hover { background: #450a0a !important; }
   .wb-card.wb-overdue { background: #2a0808 !important; }
 
   /* ---------- 设置页权限表格暗色适配（!important 压过 1740 行 .perm-group{background:#fff}） ---------- */
@@ -570,6 +577,7 @@ section.active { display: block; animation: fade .25s; }
 .tbl th.center, .tbl td.center { text-align: center; }
 /* 回收站：每行「彻底删除将波及什么」提示小字 */
 .rc-meta { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+.rc-reason { font-size: 12px; color: var(--warn, #b06b00); margin-top: 3px; line-height: 1.4; font-style: italic; }
 .table-scroll { overflow-x: auto; }
 /* 订单列表分页控件 */
 .pager { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 2px; }
@@ -1344,6 +1352,7 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
     gap: 10px 8px !important;
     align-items: end !important;
   }
+  .collab-share-row { display: flex !important; grid-template-columns: unset !important; align-items: center !important; }
   .dl-row > .dl-des { grid-column: 1 / 2; grid-row: 1; }
   .dl-row > .dl-field, .deadline-row > .dl-field { grid-column: 1 / 2; grid-row: 1; }
   .dl-row > .dl-time, .deadline-row > .dl-time  { grid-column: 2 / 3; grid-row: 1; }
@@ -1855,6 +1864,8 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 
 /* 截稿时间选择器：日期+时间横排，快捷按钮在下 */
 .dl-row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.collab-share-row { align-items: center; margin-top: 6px !important; }
+.collab-share-label { font-size: 12px; color: var(--muted); white-space: nowrap; margin-right: 4px; }
 .dl-des { flex: 0 0 26%; min-width: 0; }
 .dl-des label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .dl-des select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; font-size: 13px; }
@@ -2019,6 +2030,19 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .card-role { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; flex-shrink: 0; }
 .card-role.main { background: #e0e7ff; color: var(--primary); }
 .card-role.collab { background: #f1f5f9; color: var(--muted); }
+.card-role.ta { background: #ccfbf1; color: #0f766e; }
+
+/* ---------- 临时协助记录（仅展示，不计入绩效） ---------- */
+.wb-ta-line { font-size: 12px; color: #0f766e; background: #f0fdfa; border-left: 3px solid #14b8a6; padding: 4px 8px; border-radius: 4px; margin-top: 2px; line-height: 1.45; }
+.collab-tag.ta-tag { background: #ccfbf1; color: #0f766e; }
+.temp-assist-list { display: flex; flex-direction: column; gap: 6px; }
+.temp-assist-form { background: var(--panel, #fff); border: 1px solid var(--line, #e2e8f0); border-radius: 8px; padding: 10px; }
+.temp-assist-form .field { margin-bottom: 8px; }
+.temp-assist-form .field label { display: block; font-size: 12px; color: var(--muted, #64748b); margin-bottom: 3px; }
+.temp-assist-form .field select, .temp-assist-form .field input { width: 100%; padding: 7px 8px; border: 1px solid var(--line, #e2e8f0); border-radius: 6px; font-size: 14px; background: var(--bg, #fff); color: var(--ink, #1e293b); }
+.ta-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--bg, #f8fafc); border: 1px solid var(--line, #e2e8f0); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
+.ta-del { border: none; background: transparent; color: #ef4444; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px; border-radius: 4px; }
+.ta-del:hover { background: #fee2e2; }
 
 /* ============================================================
  * 启动 Splash（消除白屏，无感加载）

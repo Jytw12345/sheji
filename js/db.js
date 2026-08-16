@@ -409,11 +409,11 @@ window.DB = (function () {
     return row;
   }
 
-  async function remove(table, id) {
+  async function remove(table, id, reason) {
     // orders / customers 走软删除（移入回收站，可由管理员/店长还原）；其余表保持物理删除。
     // 软删除经由 DB 层 RPC（soft_delete_record）校验角色，避免退回「任何登录用户可改」的漏洞。
     if (table === 'orders' || table === 'customers' || table === 'groups') {
-      const { error } = await sb.rpc('soft_delete_record', { p_table: table, p_id: id });
+      const { error } = await sb.rpc('soft_delete_record', { p_table: table, p_id: id, p_reason: reason || null });
       if (error) { fireAuthError(error); throw error; }
       cache[table] = cache[table].filter(x => x.id !== id);
       // 注意：软删除不写 pendingDeleteIds。pendingDeleteIds 是永久集合（永不清理），
@@ -467,7 +467,7 @@ window.DB = (function () {
     g = Object.assign({ id: uid(), created_at: nowISO() }, g);
     return save('groups', g);
   }
-  async function deleteGroup(id) { return remove('groups', id); }
+  async function deleteGroup(id, reason) { return remove('groups', id, reason); }
 
   async function listCustomers() { return list('customers'); }
   async function saveCustomer(c) {
@@ -497,7 +497,7 @@ window.DB = (function () {
     cache.orders.forEach(o => { if (o.customer_id === customerId) o.customer_name = name; });
     emit();
   }
-  async function deleteCustomer(id) { return remove('customers', id); }
+  async function deleteCustomer(id, reason) { return remove('customers', id, reason); }
 
   // 仅更新某客户的 contacts_json（供 app.js 在订单弹窗内快捷添加联系人时调用，
   // 避免直接访问未导出的内部 supabase client `sb`）
@@ -544,7 +544,7 @@ window.DB = (function () {
     Object.keys(o).forEach(k => { if (k.startsWith('_')) delete o[k]; });
     return save('orders', o);
   }
-  async function deleteOrder(id) { return remove('orders', id); }
+  async function deleteOrder(id, reason) { return remove('orders', id, reason); }
 
   // ---------- 回收站（软删除）相关 ----------
   // 还原：清空 deleted_at，并把该记录重新并入主列表缓存

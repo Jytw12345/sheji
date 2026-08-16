@@ -130,7 +130,8 @@ window.Cfg = (function () {
     auto_dispatch: false,      // 自动派单：新建订单时若已指定设计师+截稿时间，自动推进到「派单」
     auto_dispatch_minutes: 5,  // 自动派单等待分钟数：接单后超过该分钟数仍未派单则自动推进
     deadline_warn_days: 15,    // 截稿提醒阈值：截稿距今天超过该天数视为「时间过长」并提醒
-    default_deadline_days: 1   // 新建订单默认截稿天数（从今天起算，默认明天；时间固定 12:00）
+    default_deadline_days: 1,  // 新建订单默认截稿天数（从今天起算，默认明天；时间固定 12:00）
+    collab_share_default: 0.3  // 协作分成默认比例：每个协作设计师从该单金额中分走的比例（主负责人拿剩余 1−n×r）
   };
 
   // 修改原因分类（用于“设计返工率”区分设计责任 vs 客户原因）
@@ -147,6 +148,25 @@ window.Cfg = (function () {
       });
     }
     return ids;
+  }
+
+  // 订单金额分成：主负责人拿剩余，每个协作设计师各分 r（默认取 settings.collab_share_default）
+  // 返回 { [designerId]: 该人分得金额 }，所有参与人金额之和 == 订单金额（不重复、不丢失）。
+  // 多人协作时约束 n·r ≤ 1，超出则自动把 r 压到 1/n，避免主负责人拿负数。
+  function revenueSplit(order, settings) {
+    const amount = Number(order && order.amount) || 0;
+    const collab = (order && Array.isArray(order.collab_designer_ids)) ? order.collab_designer_ids : [];
+    const n = collab.length;
+    let r = Number(order && order.collab_share_ratio);
+    if (!isFinite(r) || r <= 0) r = Number(settings && settings.collab_share_default) || 0;
+    r = Math.max(0, Math.min(1, r));
+    let perCollab = r;
+    if (n > 0 && n * r > 1) perCollab = 1 / n; // 兜底：主负责人至少拿 0
+    const mainShare = Math.max(0, amount - n * perCollab * amount);
+    const map = {};
+    if (order && order.assigned_designer_id) map[order.assigned_designer_id] = mainShare;
+    collab.forEach(id => { if (id) map[id] = (map[id] || 0) + perCollab * amount; });
+    return map;
   }
 
   // 绩效系数阶梯（按定稿率）
@@ -178,7 +198,7 @@ window.Cfg = (function () {
   return {
     TASK_TYPES, ROLES, ACCESS_ROLES, FLOW, STATUS, REWORK_CATEGORIES,
     PERM_GROUPS, PERMISSIONS, defaultPermissions,
-    DEFAULT_SETTINGS, perfCoefficient, orderCategory, normUrl, participants,
+    DEFAULT_SETTINGS, perfCoefficient, orderCategory, normUrl, participants, revenueSplit,
     SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_UPDATE, UPDATE_DELAY_SEC
   };
 })();

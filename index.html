@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v443" />
+  <link rel="stylesheet" href="css/styles.css?v449" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -309,6 +309,7 @@
             <div class="field"><label>小单上限(元，含)</label><input id="sSmallMax" type="number" /></div>
             <div class="field"><label>大单下限(元，不含)</label><input id="sLargeMin" type="number" /></div>
             <div class="field"><label>基础绩效工资(元)</label><input id="sBase" type="number" /></div>
+            <div class="field"><label>协作分成默认比例(0~1)</label><input id="sCollabShare" type="number" min="0" max="1" step="0.05" /></div>
             <div class="field"><label>团队奖门槛1(元)</label><input id="sTa1" type="number" /></div>
             <div class="field"><label>团队奖金额1(元)</label><input id="sAa1" type="number" /></div>
             <div class="field"><label>团队奖门槛2(元)</label><input id="sTa2" type="number" /></div>
@@ -479,12 +480,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v443"></script>
-  <script defer src="js/db.js?v443"></script>
-  <script defer src="js/calc.js?v443"></script>
-  <script defer src="js/charts.js?v443"></script>
-  <script defer src="js/export.js?v443"></script>
-  <script defer src="js/app.js?v443"></script>
+  <script defer src="js/config.js?v449"></script>
+  <script defer src="js/db.js?v449"></script>
+  <script defer src="js/calc.js?v449"></script>
+  <script defer src="js/charts.js?v449"></script>
+  <script defer src="js/export.js?v449"></script>
+  <script defer src="js/app.js?v449"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）
