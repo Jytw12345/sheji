@@ -2935,24 +2935,29 @@
     const selContactName = o ? (o._contactName || '') : '';
     if (compact) {
       const parts = [];
-      parts.push('<b>' + esc(c.name) + '</b>');
+      // 不重复显示客户名，上方「客户」输入框已展示
       // 主联系人 + 额外联系人全部渲染为可选胶囊
       const allContacts = [];
-      if (c.company) allContacts.push({ name: c.company, phone: c.phone || '', role: '主联系人', isMain: true });
+      if (c.company) allContacts.push({ name: c.company, phone: c.phone || '', role: '主', isMain: true });
       extra.forEach(ct => allContacts.push({ name: ct.name || '', phone: ct.phone || '', role: ct.role || '联系人', isMain: false }));
       if (allContacts.length > 0) {
         const pills = allContacts.map(ct => {
           const isActive = ct.name && (ct.name === selContactName || (!selContactName && ct.isMain));
-          return '<span class="cust-contact-pill' + (isActive ? ' active' : '') + '" data-cname="' + esc(ct.name) + '" data-cphone="' + esc(ct.phone) + '" title="' + esc(ct.role + (ct.phone ? ' · ' + ct.phone : '')) + '">' +
-            '<span class="ccp-role">' + esc(ct.role) + '</span>' + esc(ct.name) + (ct.phone ? ' <span class="ccp-phone">' + esc(ct.phone) + '</span>' : '') +
+          const roleLabel = ct.role === '主' ? '主' : (ct.role || '联系人');
+          const roleTitle = ct.role === '主' ? '主联系人' : (ct.role || '联系人');
+          return '<span class="cust-contact-pill' + (isActive ? ' active' : '') + '" data-cname="' + esc(ct.name) + '" data-cphone="' + esc(ct.phone) + '" data-crole="' + esc(roleTitle) + '" data-cmain="' + (ct.isMain ? '1' : '0') + '" title="' + esc(roleTitle + (ct.phone ? ' · ' + ct.phone : '')) + '">' +
+            esc(ct.name) +
+            '<span class="ccp-role">' + esc(roleLabel) + '</span>' +
+            (ct.phone ? ' <span class="ccp-phone">' + esc(ct.phone) + '</span>' : '') +
             '</span>';
         });
         parts.push('<div class="cust-contacts-row">' + pills.join('') + '</div>');
         // 快捷添加联系人按钮
         parts.push('<button type="button" class="btn-quick-add-contact" id="btnQuickAddContact" title="为该客户快速添加新联系人">＋ 添加联系人</button>');
+        // 点击联系人后展开的详情卡片（默认空）
+        parts.push('<div class="contact-detail-card" id="contactDetailCard" style="display:none"></div>');
       } else {
-        if (c.company) parts.push('联系人 ' + esc(c.company));
-        if (c.phone) parts.push('电话 ' + esc(c.phone));
+        parts.push('<span class="cust-detail" style="margin-right:8px">暂无联系人</span>');
         parts.push('<button type="button" class="btn-quick-add-contact" id="btnQuickAddContact" title="为该客户添加联系人">＋ 添加联系人</button>');
       }
       // 始终显示电话和地址（有联系人时也展示）
@@ -2974,17 +2979,53 @@
   function bindOrderContactPicker(cs) {
     const custInfo = $('#oCustInfo');
     if (!custInfo) return;
-    // 点击联系人胶囊 → 切换选中
+    // 点击联系人胶囊 → 切换选中并展开详情
     custInfo.addEventListener('click', (e) => {
       const pill = e.target.closest('.cust-contact-pill');
       if (pill) {
+        const wasActive = pill.classList.contains('active');
+        const detailCard = $('#contactDetailCard');
         $$('.cust-contact-pill', custInfo).forEach(p => p.classList.remove('active'));
+        if (wasActive) {
+          // 再次点击已选中的胶囊：仅收起详情，不保留选中
+          if (detailCard) detailCard.style.display = 'none';
+          const o = state.editingOrder;
+          if (o) { o._contactName = ''; o._contactPhone = ''; }
+          return;
+        }
         pill.classList.add('active');
         const o = state.editingOrder;
         if (o) {
           o._contactName = pill.dataset.cname || '';
           o._contactPhone = pill.dataset.cphone || '';
         }
+        // 展开详情卡片
+        const cid = $('#oCustomer') ? $('#oCustomer').value : '';
+        const c = (cs || []).find(x => x.id === cid);
+        const name = pill.dataset.cname || '';
+        const phone = pill.dataset.cphone || '';
+        const role = pill.dataset.crole || '联系人';
+        const isMain = pill.dataset.cmain === '1';
+        if (detailCard) {
+          const rows = [];
+          rows.push('<div class="cdc-row"><span class="cdc-label">角色</span><span>' + esc(role) + '</span></div>');
+          if (phone) rows.push('<div class="cdc-row"><span class="cdc-label">电话</span><span>' + esc(phone) + '</span></div>');
+          if (isMain && c && c.phone && c.phone !== phone) rows.push('<div class="cdc-row"><span class="cdc-label">客户电话</span><span>' + esc(c.phone) + '</span></div>');
+          if (isMain && c && c.address) rows.push('<div class="cdc-row"><span class="cdc-label">地址</span><span>' + esc(c.address) + '</span></div>');
+          detailCard.innerHTML = '<div class="cdc-header"><b>' + esc(name) + '</b><button type="button" class="cdc-close" title="收起">✕</button></div>' +
+            '<div class="cdc-body">' + rows.join('') + '</div>';
+          detailCard.style.display = '';
+        }
+        return;
+      }
+      // 点击详情卡片关闭按钮
+      const closeBtn = e.target.closest('.cdc-close');
+      if (closeBtn) {
+        const detailCard = $('#contactDetailCard');
+        if (detailCard) detailCard.style.display = 'none';
+        $$('.cust-contact-pill', custInfo).forEach(p => p.classList.remove('active'));
+        const o = state.editingOrder;
+        if (o) { o._contactName = ''; o._contactPhone = ''; }
         return;
       }
       // 点击「＋ 添加联系人」按钮
@@ -3402,7 +3443,7 @@
       '<label class="chk"><input type="checkbox" class="oCollab" value="' + d.id + '"' +
       (collabIds.includes(d.id) ? ' checked' : '') + '> ' + esc(d.name) + '</label>').join('');
     const FLOW = window.Cfg.FLOW;
-    const idx = s => FLOW.indexOf(s);
+    const idx = s => window.Cfg.flowStageIndex(s);
     const cur = idx(o.status);
     const isTerminal = (o.status === '已定稿' || o.status === '已换人');
     const steps = FLOW.map((s, i) => {
@@ -3508,6 +3549,10 @@
             <div class="grid2-sm">
               <div class="field"><label>协助设计师</label><select id="taDesigner">${ds.filter(d => isActiveDesign(d) || tempAssistIds(o).includes(d.id)).map(d => '<option value="' + d.id + '">' + esc(d.name) + '</option>').join('')}</select></div>
               <div class="field"><label>日期</label><input type="date" id="taDate" value="${todayStr()}"></div>
+            </div>
+            <div class="grid2-sm" style="margin-top:6px">
+              <div class="field"><label>开始时间</label><input type="time" id="taStart" value="09:00"></div>
+              <div class="field"><label>结束时间</label><input type="time" id="taEnd" placeholder="如 11:00"></div>
             </div>
             <div class="field" style="margin-top:6px"><label>备注（可选）</label><input id="taNote" placeholder="如：A 休班，帮忙改了初稿" maxlength="60"></div>
             <div style="margin-top:8px">
@@ -3727,7 +3772,7 @@
     const taCancel = $('#taCancel');
     if (taCancel) taCancel.addEventListener('click', () => { const f = $('#tempAssistForm'); if (f) f.style.display = 'none'; });
     const taConfirm = $('#taConfirm');
-    if (taConfirm) taConfirm.addEventListener('click', () => {
+    if (taConfirm) taConfirm.addEventListener('click', async () => {
       const did = $('#taDesigner') ? $('#taDesigner').value : '';
       if (!did) { toast('请选择协助设计师'); return; }
       const d = (state._designers || []).find(x => x.id === did);
@@ -3735,22 +3780,40 @@
         did,
         name: d ? d.name : '',
         date: ($('#taDate') ? $('#taDate').value : '') || todayStr(),
+        start: ($('#taStart') ? ($('#taStart').value || '') : ''),
+        end: ($('#taEnd') ? ($('#taEnd').value || '') : ''),
         note: ($('#taNote') ? ($('#taNote').value || '').trim() : '')
       };
       state.editingOrder.temp_assist_log = (state.editingOrder.temp_assist_log || []).concat(entry);
-      state.editingOrder._dirty = true;
+      const saved = await persistEditingOrder();
       const list = $('#tempAssistList'); if (list) list.innerHTML = tempAssistHtml(state.editingOrder);
       const f = $('#tempAssistForm'); if (f) f.style.display = 'none';
       if ($('#taNote')) $('#taNote').value = '';
-      toast('已记录临时协助（点「保存信息」后生效）');
+      toast(saved ? '已保存临时协助' : '已记录临时协助（请点「保存信息」）');
     });
     $$('#modalBox [data-ta-del]').forEach(b => b.addEventListener('click', () => {
       const i = Number(b.dataset.taDel);
       const log = (state.editingOrder.temp_assist_log || []).slice();
       log.splice(i, 1);
       state.editingOrder.temp_assist_log = log;
-      state.editingOrder._dirty = true;
-      const list = $('#tempAssistList'); if (list) list.innerHTML = tempAssistHtml(state.editingOrder);
+      (async () => {
+        const saved = await persistEditingOrder();
+        const list = $('#tempAssistList'); if (list) list.innerHTML = tempAssistHtml(state.editingOrder);
+        toast(saved ? '已删除临时协助' : '已移除（请点「保存信息」）');
+      })();
+    }));
+    // 标记协助已完成：保留记录，立即从工作台/团队看板撤下
+    $$('#modalBox [data-ta-done]').forEach(b => b.addEventListener('click', () => {
+      const i = Number(b.dataset.taDone);
+      const log = (state.editingOrder.temp_assist_log || []).slice();
+      if (!log[i]) return;
+      log[i] = Object.assign({}, log[i], { done: true, end: log[i].end || new Date().toTimeString().slice(0, 5) });
+      state.editingOrder.temp_assist_log = log;
+      (async () => {
+        const saved = await persistEditingOrder();
+        const list = $('#tempAssistList'); if (list) list.innerHTML = tempAssistHtml(state.editingOrder);
+        toast(saved ? '已标记完成协助' : '已标记（请点「保存信息」）');
+      })();
     }));
     // 素材文件路径：实时预览 + 点击打开/复制
     const fpEl = $('#oFilePaths');
@@ -3865,7 +3928,7 @@
     } else if (o.status === '修改中') {
       pending = [{ name: '客户定稿', state: 'pending' }, { name: '换人', state: 'pending' }];
     } else {
-      let curIdx = FLOW.indexOf(o.status);
+      let curIdx = window.Cfg.flowStageIndex(o.status);
       // 已定稿 / 已换人均为终态，不再显示后续待推进步骤
       if (o.status === '已换人' || o.status === '已定稿') curIdx = FLOW.length;
       pending = (curIdx >= 0 && curIdx < FLOW.length - 1)
@@ -4494,6 +4557,8 @@
         if (L.has('deadline')) o.deadline = f.deadline;
         if (L.has('designer')) {
           o.assigned_designer_id = f.assigned_designer_id;
+        }
+        if (L.has('collab')) {
           o.collab_designer_ids = f.collab_designer_ids.slice();
         }
       }
@@ -4531,6 +4596,40 @@
     }
   }
 
+  // 轻量自动保存：用于「添加/删除/标记完成临时协助」等弹窗内轻操作，
+  // 复用与「保存信息」一致的锁定字段覆盖逻辑，但【不关闭弹窗、不弹强提示】。
+  // 返回 true 表示已成功入库；false 表示未保存（如新建订单尚无 id），此时应提示用户手动点保存。
+  async function persistEditingOrder() {
+    const o = state.editingOrder;
+    if (!o || !o.id) return false; // 新建订单尚无 id：交给草稿 + 手动保存
+    try {
+      syncFieldsFromModal(); // 先把弹窗里其它已改字段一并入库，避免自动保存反而覆盖用户改动
+      // 双保险：锁定字段以快照原值覆盖（与「保存信息」一致）
+      if (_orderLockSnapshot && _orderLockSnapshot.status === o.status) {
+        const f = _orderLockSnapshot.fields, L = _orderLockSnapshot.locked;
+        if (L.has('title')) o.title = f.title;
+        if (L.has('type')) o.task_type = f.task_type;
+        if (L.has('customer')) o.customer_id = f.customer_id;
+        if (L.has('amount')) o.amount = f.amount;
+        if (L.has('deadline')) o.deadline = f.deadline;
+        if (L.has('designer')) o.assigned_designer_id = f.assigned_designer_id;
+        if (L.has('collab')) o.collab_designer_ids = f.collab_designer_ids.slice();
+      }
+      delete o._contactName; delete o._contactPhone;
+      const cust = (state._customers || []).find(c => c.id === o.customer_id);
+      o.customer_name = cust ? cust.name : (o.customer_name || '');
+      await DB.saveOrder(o);
+      // 回写缓存，保证工作台/列表立即反映，且弹窗关闭不致丢失
+      const idx = (state._orders || []).findIndex(x => x.id === o.id);
+      if (idx >= 0) state._orders[idx] = Object.assign({}, state._orders[idx], o);
+      o._dirty = false;
+      return true;
+    } catch (e) {
+      console.error('persistEditingOrder error', e);
+      return false;
+    }
+  }
+
   async function delOrder(id) {
     if (!can('orders_delete')) { toast('无删除订单权限'); return; }
     if (!lockOp('delOrder:' + id)) return;   // 防重复点击（连点/双击）
@@ -4563,14 +4662,69 @@
   function tempAssistIds(o) {
     return (o && Array.isArray(o.temp_assist_log)) ? o.temp_assist_log.map(r => r && r.did).filter(Boolean) : [];
   }
+  // 判断某设计师当前是否处于"有效协助时段"（用于工作台显示）
+  //  - 终态订单（已定稿/已换人/已取消）不再显示为协助
+  //  - 有结束时间(end "HH:MM") → 当前时间 <= 该日结束时刻才显示
+  //  - 无结束时间但有日期 → 当天 23:59:59 前显示（历史日期自动消失）
+  //  - 完全无日期 → 兜底仍显示
+  const TA_TERMINAL = ['已定稿', '已换人', '已取消'];
+  function isTaActiveNow(o, did, now) {
+    if (!o || !Array.isArray(o.temp_assist_log) || !did) return false;
+    if (TA_TERMINAL.includes(o.status)) return false;
+    now = now || new Date();
+    return o.temp_assist_log.some(r => {
+      if (r.did !== did) return false;
+      if (r.done) return false; // 已手动标记完成协助 → 立即从工作台撤下（记录仍留痕）
+      const dateStr = r.date || '';
+      const endStr = r.end || '';
+      if (endStr && dateStr) {
+        const end = new Date(dateStr + 'T' + endStr);
+        if (!isNaN(end.getTime())) return now <= end;
+      }
+      if (dateStr) {
+        const dayEnd = new Date(dateStr + 'T23:59:59');
+        if (!isNaN(dayEnd.getTime())) return now <= dayEnd;
+      }
+      return true;
+    });
+  }
   function tempAssistHtml(o) {
     const log = (o && Array.isArray(o.temp_assist_log)) ? o.temp_assist_log : [];
     if (!log.length) return '<div class="muted" style="font-size:12px">暂无临时协助记录</div>';
     return log.map((r, i) =>
-      '<div class="ta-item"><span>🤝 ' + esc(r.name || '未知') + ' · ' + esc(r.date || '') +
-      (r.note ? ' · ' + esc(r.note) : '') + '</span>' +
+      '<div class="ta-item' + (r.done ? ' done' : '') + '"><span>🤝 ' + esc(r.name || '未知') + ' · ' + esc(r.date || '') +
+      (r.start || r.end ? ' ' + esc(r.start || '…') + '–' + esc(r.end || '…') : '') +
+      (r.note ? ' · ' + esc(r.note) : '') +
+      (r.done ? ' · <span class="ta-done-tag">已完成</span>' : '') + '</span>' +
+      (r.done ? '' :
+        '<button type="button" class="btn-mini ta-done-btn" data-ta-done="' + i + '" title="标记协助已完成（保留留痕，立即从工作台撤下）">完成</button>') +
       '<button type="button" class="btn-mini ta-del" data-ta-del="' + i + '" title="删除此条">×</button></div>'
     ).join('');
+  }
+  // 工作台/团队看板卡片上直接标记当前设计师的临时协助已完成
+  async function markTempAssistDone(orderId, designerId) {
+    if (!orderId || !designerId) return;
+    const o = (state._orders || []).find(x => x.id === orderId);
+    if (!o || !Array.isArray(o.temp_assist_log)) return;
+    const timeStr = new Date().toTimeString().slice(0, 5);
+    let changed = false;
+    o.temp_assist_log = o.temp_assist_log.map(r => {
+      if (r.did === designerId && !r.done) {
+        changed = true;
+        return Object.assign({}, r, { done: true, end: r.end || timeStr });
+      }
+      return r;
+    });
+    if (!changed) return;
+    o._dirty = true;
+    try {
+      await DB.saveOrder(o);
+      toast('已完成协助（卡片稍后刷新）');
+      renderWorkbench();
+    } catch (err) {
+      console.error('markTempAssistDone error', err);
+      toast('标记完成失败：' + (err.message || '未知错误'));
+    }
   }
   function todayStr() { return new Date().toISOString().slice(0, 10); }
   function renderWorkbench() {
@@ -4613,7 +4767,7 @@
     const now = new Date();
     let cardOrders = orders.slice();
     // 临时协助订单也展示给协助设计师（便于打开修改），但 `orders`（统计口径）仍只含 participants，故不计入任何业绩
-    const taOrders = (state._orders || []).filter(o => d && tempAssistIds(o).includes(d.id) && !window.Cfg.participants(o).includes(d.id));
+    const taOrders = (state._orders || []).filter(o => d && isTaActiveNow(o, d.id, now) && !window.Cfg.participants(o).includes(d.id));
     cardOrders = cardOrders.concat(taOrders);
     if (fStatus === 'active') cardOrders = cardOrders.filter(o => ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案'].includes(o.status));
     else if (fStatus) cardOrders = cardOrders.filter(o => o.status === fStatus);
@@ -4760,6 +4914,7 @@
     $$('#workbenchCards [data-open]').forEach(b => b.addEventListener('click', () => openOrder(b.dataset.open)));
     $$('#workbenchCards [data-openfolder]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openInExplorer(b.dataset.openfolder); }));
     $$('#workbenchCards [data-fpcopy]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); copyText(b.dataset.fpcopy); toast('已复制路径'); }));
+    $$('#workbenchCards [data-ta-done-order]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); markTempAssistDone(b.dataset.taDoneOrder, b.dataset.taDoneDid); }));
   }
 
   // 「我的工作台 → 团队看板」：所有设计师各占一列（管理员/店长看全团队，普通设计师仅看自己那一列），
@@ -4783,7 +4938,7 @@
     const ACTIVE = ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案', '提案不通过'];
     let html = '<div class="team-scroll-hint" id="teamScrollHint">← 左右滑动 / 滚动查看更多设计师 →</div><div class="team-board" id="teamBoard">';
     list.forEach(d => {
-      const orders = (state._orders || []).filter(o => (window.Cfg.participants(o).includes(d.id) || tempAssistIds(o).includes(d.id)) && ACTIVE.includes(o.status));
+      const orders = (state._orders || []).filter(o => (window.Cfg.participants(o).includes(d.id) || isTaActiveNow(o, d.id)) && ACTIVE.includes(o.status));
       orders.sort((a, b) => (b.intake_at || '').localeCompare(a.intake_at || ''));
       const cards = orders.length
         ? orders.map(o => teamBoardCard(o, d)).join('')
@@ -4823,7 +4978,7 @@
     const ACTIVE = ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案', '提案不通过'];
     const now = Date.now();
     const rows = list.map(d => {
-      const orders = (state._orders || []).filter(o => (window.Cfg.participants(o).includes(d.id) || tempAssistIds(o).includes(d.id)) && ACTIVE.includes(o.status));
+      const orders = (state._orders || []).filter(o => (window.Cfg.participants(o).includes(d.id) || isTaActiveNow(o, d.id)) && ACTIVE.includes(o.status));
       let nearDue = 0, overdue = 0, amt = 0; const dls = [];
       orders.forEach(o => {
         amt += Number(o.amount) || 0;
@@ -4919,7 +5074,7 @@
     // 是否已提供初稿：有初稿时间戳，或状态已推进到初稿及之后
     const FLOW = window.Cfg.FLOW;
     const draftIdx = FLOW.indexOf('初稿');
-    const curIdx = FLOW.indexOf(o.status);
+    const curIdx = window.Cfg.flowStageIndex(o.status);
     const hasDraft = !!o.draft_at || (draftIdx >= 0 && curIdx >= draftIdx && o.status !== '设计中');
     const now = Date.now();
     const dl = new Date(o.deadline).getTime();
@@ -4961,10 +5116,10 @@
     const dsMap = Object.fromEntries((state._designers || []).map(d => [d.id, d.name]));
     const isMeMain = o.assigned_designer_id === designer.id;
     const isMeCollab = Array.isArray(o.collab_designer_ids) && o.collab_designer_ids.includes(designer.id);
-    const isMeTA = tempAssistIds(o).includes(designer.id);
+    const isMeTA = isTaActiveNow(o, designer.id);
     const roleTag = isMeMain ? '<span class="card-role main">负责人</span>' : isMeCollab ? '<span class="card-role collab">协作</span>' : isMeTA ? '<span class="card-role ta">临时协助</span>' : '<span class="card-role collab">协作</span>';
     const FLOW = window.Cfg.FLOW;
-    const curIdx = FLOW.indexOf(o.status);
+    const curIdx = window.Cfg.flowStageIndex(o.status);
     const totalSteps = FLOW.length;
     let progress = 0;
     if (o.status === '已定稿') progress = 100;
@@ -4997,7 +5152,12 @@
       ? '<div class="wb-row wb-client-type">' + clientPart + '<b>类型：</b>' + esc(o.task_type) + '</div>'
       : '<div class="wb-row wb-client-type">' + clientPart + '<b>类型：</b>' + esc(o.task_type) + ' · <b>主负责人：</b>' + esc(dsMap[o.assigned_designer_id] || '未派') + '</div>';
     const myTa = (o.temp_assist_log || []).filter(r => r.did === designer.id);
-    const taLine = myTa.length ? '<div class="wb-ta-line">🤝 临时协助：' + myTa.map(r => esc(r.date || '') + (r.note ? ' ' + esc(r.note) : '')).join('；') + '</div>' : '';
+    const hasActiveTa = myTa.some(r => !r.done);
+    const taLine = myTa.length
+      ? '<div class="wb-ta-line"><span>🤝 临时协助：' + myTa.map(r => esc(r.date || '') + (r.note ? ' ' + esc(r.note) : '')).join('；') + '</span>' +
+        (hasActiveTa ? '<button type="button" class="btn-mini wb-ta-done" data-ta-done-order="' + esc(o.id) + '" data-ta-done-did="' + esc(designer.id) + '" title="标记我的临时协助已完成">完成</button>' : '') +
+        '</div>'
+      : '';
     return `
       <div class="wb-card ${dl.cardClass}">
         <div class="wb-head-ring">
@@ -5035,10 +5195,10 @@
     const dsMap = Object.fromEntries((state._designers || []).map(d => [d.id, d.name]));
     const isMeMain = o.assigned_designer_id === designer.id;
     const isMeCollab = Array.isArray(o.collab_designer_ids) && o.collab_designer_ids.includes(designer.id);
-    const isMeTA = tempAssistIds(o).includes(designer.id);
+    const isMeTA = isTaActiveNow(o, designer.id);
     const roleTag = isMeMain ? '<span class="card-role main">负责人</span>' : isMeCollab ? '<span class="card-role collab">协作</span>' : isMeTA ? '<span class="card-role ta">临时协助</span>' : '<span class="card-role collab">协作</span>';
     const FLOW = window.Cfg.FLOW;
-    const curIdx = FLOW.indexOf(o.status);
+    const curIdx = window.Cfg.flowStageIndex(o.status);
     const totalSteps = FLOW.length;
     let progress = 0;
     if (o.status === '已定稿') progress = 100;
@@ -5051,7 +5211,12 @@
     const sameAsTitle = (o.customer_name || '').trim() === (o.title || '').trim();
     const clientPart = sameAsTitle ? '' : esc(o.customer_name || '—') + ' · ';
     const myTa = (o.temp_assist_log || []).filter(r => r.did === designer.id);
-    const taLine = myTa.length ? '<div class="wb-ta-line">🤝 临时协助：' + myTa.map(r => esc(r.date || '') + (r.note ? ' ' + esc(r.note) : '')).join('；') + '</div>' : '';
+    const hasActiveTa = myTa.some(r => !r.done);
+    const taLine = myTa.length
+      ? '<div class="wb-ta-line"><span>🤝 临时协助：' + myTa.map(r => esc(r.date || '') + (r.note ? ' ' + esc(r.note) : '')).join('；') + '</span>' +
+        (hasActiveTa ? '<button type="button" class="btn-mini wb-ta-done" data-ta-done-order="' + esc(o.id) + '" data-ta-done-did="' + esc(designer.id) + '" title="标记我的临时协助已完成">完成</button>' : '') +
+        '</div>'
+      : '';
     return `
       <div class="team-card ${dl.cardClass}" data-open="${o.id}" title="点击查看详情">
         <div class="team-card-head">

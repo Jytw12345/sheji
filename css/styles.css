@@ -125,6 +125,11 @@
   .temp-assist-form { background: #0f1629 !important; border-color: var(--line) !important; }
   .temp-assist-form .field select, .temp-assist-form .field input { background: #0f1629 !important; color: var(--ink) !important; border-color: var(--line) !important; }
   .ta-item { background: #0f1629 !important; border-color: var(--line) !important; color: var(--ink) !important; }
+  .ta-done-btn { background: #052e1a !important; border-color: #14532d !important; color: #4ade80 !important; }
+  .ta-done-btn:hover { background: #064e36 !important; }
+  .ta-done-tag { background: #052e1a !important; border-color: #14532d !important; color: #4ade80 !important; }
+  .wb-ta-done { background: #052e1a !important; border-color: #14532d !important; color: #4ade80 !important; }
+  .wb-ta-done:hover { background: #064e36 !important; }
   .ta-del:hover { background: #450a0a !important; }
   .wb-card.wb-overdue { background: #2a0808 !important; }
 
@@ -1510,9 +1515,15 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .cust-contact-pill .ccp-role {
   font-size: 10px;
   opacity: 0.7;
-  margin-right: 2px;
+  margin-left: 4px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--line, #e2e8f0);
 }
-.cust-contact-pill.active .ccp-role { opacity: 0.85; }
+.cust-contact-pill.active .ccp-role {
+  opacity: 0.85;
+  background: rgba(255,255,255,0.25);
+}
 .cust-contact-pill .ccp-phone {
   font-size: 10px;
   opacity: 0.6;
@@ -1538,6 +1549,53 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .btn-quick-add-contact:hover {
   background: #f0f0ff;
   border-style: solid;
+}
+
+.contact-detail-card {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid var(--border, #e2e8f0);
+  font-size: 12px;
+  color: var(--text, #334155);
+  animation: fadeIn 0.15s ease;
+}
+.contact-detail-card .cdc-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.contact-detail-card .cdc-header b {
+  font-size: 13px;
+  color: var(--text, #1e293b);
+}
+.contact-detail-card .cdc-close {
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted, #64748b);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.contact-detail-card .cdc-close:hover { color: var(--text, #334155); }
+.contact-detail-card .cdc-body { display: flex; flex-direction: column; gap: 4px; }
+.contact-detail-card .cdc-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.contact-detail-card .cdc-row .cdc-label {
+  flex: 0 0 56px;
+  color: var(--muted, #64748b);
+  font-size: 11.5px;
+}
+.contact-detail-card .cdc-row span:last-child {
+  flex: 1;
+  word-break: break-all;
 }
 
 .quick-contact-form {
@@ -2041,7 +2099,10 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .card-role.ta { background: #ccfbf1; color: #0f766e; }
 
 /* ---------- 临时协助记录（仅展示，不计入绩效） ---------- */
-.wb-ta-line { font-size: 12px; color: #0f766e; background: #f0fdfa; border-left: 3px solid #14b8a6; padding: 4px 8px; border-radius: 4px; margin-top: 2px; line-height: 1.45; }
+.wb-ta-line { font-size: 12px; color: #0f766e; background: #f0fdfa; border-left: 3px solid #14b8a6; padding: 4px 8px; border-radius: 4px; margin-top: 2px; line-height: 1.45; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wb-ta-line span { flex: 1; }
+.wb-ta-done { border: 1px solid #16a34a; background: #f0fdf4; color: #16a34a; border-radius: 4px; padding: 1px 8px; font-size: 11px; font-weight: 600; cursor: pointer; line-height: 1.4; white-space: nowrap; }
+.wb-ta-done:hover { background: #dcfce7; }
 .collab-tag.ta-tag { background: #ccfbf1; color: #0f766e; }
 .temp-assist-list { display: flex; flex-direction: column; gap: 6px; }
 .temp-assist-form { background: var(--panel, #fff); border: 1px solid var(--line, #e2e8f0); border-radius: 8px; padding: 10px; }
@@ -2051,6 +2112,11 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .ta-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--bg, #f8fafc); border: 1px solid var(--line, #e2e8f0); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
 .ta-del { border: none; background: transparent; color: #ef4444; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px; border-radius: 4px; }
 .ta-del:hover { background: #fee2e2; }
+.ta-done-btn { border: 1px solid #16a34a; background: #f0fdf4; color: #16a34a; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ta-done-btn:hover { background: #dcfce7; }
+.ta-done-tag { display: inline-block; font-size: 11px; font-weight: 600; color: #16a34a; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 1px 6px; }
+.ta-item.done { opacity: 0.62; }
+.ta-item.done span { text-decoration: line-through; text-decoration-color: #94a3b8; }
 
 /* ============================================================
  * 启动 Splash（消除白屏，无感加载）

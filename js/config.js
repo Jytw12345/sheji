@@ -100,9 +100,9 @@ window.Cfg = (function () {
     });
     return { roleDefaults, overrides: {} };
   }
-  // 流程顺序（用于“推进流程”按钮的下一步）
-  // 流程线性顺序（含环形分支态，供进度条/截稿逻辑用 indexOf 正确定位；按钮「下一步」由实际可达态推导，不依赖此数组）
-  const FLOW = ['接单', '派单', '提案', '提案不通过', '设计中', '初稿', '客户反馈', '修改中', '已定稿', '已换人'];
+  // 主流程（仅主干阶段，用于流程条 / 进度条）。分支结果「提案不通过」、终态「已换人」
+  // 不在主干上，改用 flowStageIndex() 锚定到对应主干阶段；它们的真实发生记录仍由时间线展示。
+  const FLOW = ['接单', '派单', '提案', '设计中', '初稿', '客户反馈', '修改中', '已定稿'];
   const STATUS = {
     '接单':     { label: '接单',       color: '#64748b', detail: '已接单，等待派单' },
     '派单':     { label: '派单',       color: '#4f46e5', detail: '已派单，设计中' },
@@ -116,6 +116,17 @@ window.Cfg = (function () {
     '已换人':   { label: '已换人',     color: '#94a3b8', detail: '已更换设计师' },
     '已取消':   { label: '已取消',     color: '#94a3b8', detail: '客户取消/终止合作' }
   };
+
+  // 把任意订单状态映射到主流程 FLOW 的索引：
+  // 主干态直接返回其位置；分支态「提案不通过」锚定到「提案」阶段；终态「已换人」等同「已定稿」；
+  // 其余（如「已取消」）返回 -1，由调用方按未识别处理。
+  function flowStageIndex(status) {
+    const i = FLOW.indexOf(status);
+    if (i >= 0) return i;
+    if (status === '提案不通过') return FLOW.indexOf('提案');
+    if (status === '已换人') return FLOW.length - 1;
+    return -1;
+  }
 
   // 默认设置（可在“设置”页修改，保存到 settings 表 / localStorage）
   const DEFAULT_SETTINGS = {
@@ -196,7 +207,7 @@ window.Cfg = (function () {
   }
 
   return {
-    TASK_TYPES, ROLES, ACCESS_ROLES, FLOW, STATUS, REWORK_CATEGORIES,
+    TASK_TYPES, ROLES, ACCESS_ROLES, FLOW, STATUS, REWORK_CATEGORIES, flowStageIndex,
     PERM_GROUPS, PERMISSIONS, defaultPermissions,
     DEFAULT_SETTINGS, perfCoefficient, orderCategory, normUrl, participants, revenueSplit,
     SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_UPDATE, UPDATE_DELAY_SEC
