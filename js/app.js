@@ -3486,14 +3486,11 @@
 
         <div class="form-section">
           <div class="form-sec-title">派单与协作</div>
-          <div class="dispatch-row">
-            <div class="field dl-des"><label>派单设计师</label><select id="oDesigner"${dDesigner}><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
-            <div class="field collab-field"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><div class="chips">${collabHtml ? collabHtml.replace(/class="oCollab"/g, 'class="oCollab"' + dCollab) : '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div></div>
-          </div>
-          <div class="dl-row collab-share-row">
-            <label class="collab-share-label">协作分成比例</label>
-            <div style="display:inline-flex;align-items:center;gap:6px">
-              <input type="number" id="collabShare" min="0" max="1" step="0.05" value="${collabShareVal}"${dCollab} placeholder="如 0.3" style="width:70px" /> <span class="muted">默认 ${Math.round(collabShareDefault * 100)}%</span>
+          <div class="dispatch-grid">
+            <div class="field dg-left"><label>派单设计师</label><select id="oDesigner"${dDesigner}><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
+            <div class="field dg-collab">
+              <div class="dg-collab-head"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><span class="dg-ratio-inline"><label>分成比例</label><input type="number" id="collabShare" min="0" max="1" step="0.05" value="${collabShareVal}"${dCollab} placeholder="0.3" /><span class="muted">默认 ${Math.round(collabShareDefault * 100)}%</span></span></div>
+              <div class="chips">${collabHtml ? collabHtml.replace(/class="oCollab"/g, 'class="oCollab"' + dCollab) : '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div>
             </div>
           </div>
           <div class="dl-row deadline-row" style="margin-top:8px">

@@ -1341,18 +1341,19 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
     overflow-y: auto; overflow-x: hidden;
   }
   /* 移动端：派单/协作回到分块，截稿日期/时间/快捷两列 */
-  .dispatch-row {
+  .dispatch-grid {
     display: block !important;
   }
-  .dispatch-row .dl-des { width: 100% !important; margin-bottom: 8px; }
-  .dispatch-row .collab-field { width: 100% !important; }
+  .dg-left { width: 100% !important; margin-bottom: 6px; }
+  .dg-collab-head { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+  .dg-ratio-inline { margin-left: 0; }
+  .dg-collab { width: 100% !important; }
   .dl-row, .deadline-row {
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
     gap: 10px 8px !important;
     align-items: end !important;
   }
-  .collab-share-row { display: flex !important; grid-template-columns: unset !important; align-items: center !important; }
   .dl-row > .dl-des { grid-column: 1 / 2; grid-row: 1; }
   .dl-row > .dl-field, .deadline-row > .dl-field { grid-column: 1 / 2; grid-row: 1; }
   .dl-row > .dl-time, .deadline-row > .dl-time  { grid-column: 2 / 3; grid-row: 1; }
@@ -1864,8 +1865,6 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 
 /* 截稿时间选择器：日期+时间横排，快捷按钮在下 */
 .dl-row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
-.collab-share-row { align-items: center; margin-top: 6px !important; }
-.collab-share-label { font-size: 12px; color: var(--muted); white-space: nowrap; margin-right: 4px; }
 .dl-des { flex: 0 0 26%; min-width: 0; }
 .dl-des label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .dl-des select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; font-size: 13px; }
@@ -1878,11 +1877,20 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 /* 截稿时间：小时:分钟 双下拉横排 */
 .dl-time { flex: 1; min-width: 150px; }
 
-/* 派单与协作：桌面端派单设计师 + 协作设计师同一行；截稿日期/时间/快捷同一行 */
-.dispatch-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: nowrap; }
-.dispatch-row .dl-des { flex: 0 0 140px; }
-.dispatch-row .collab-field { flex: 1 1 0; min-width: 0; }
-.dispatch-row .collab-field .chips { flex-wrap: wrap; }
+/* 派单与协作：桌面端左右分栏 —— 左(派单) 右(协作+分成同行) */
+.dispatch-grid { display: flex; gap: 20px; align-items: flex-start; }
+.dg-left { flex: 0 0 210px; min-width: 0; }
+.dg-left label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.dg-left select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; font-size: 13px; }
+/* 右栏：标题行(协作label + 分成比例 同行) + 复选框行 */
+.dg-collab { flex: 1 1 0; min-width: 0; }
+.dg-collab-head { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; flex-wrap: wrap; }
+.dg-collab-head > label { font-size: 12px; white-space: nowrap; }
+/* 分成比例内联到协作标题右侧 */
+.dg-ratio-inline { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+.dg-ratio-inline > label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.dg-ratio-inline input { width: 56px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; box-sizing: border-box; font-size: 13px; text-align: center; }
+.dg-collab .chips { flex-wrap: wrap; }
 .deadline-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: nowrap; }
 .deadline-row .dl-field { flex: 0 0 28%; min-width: 0; }
 .deadline-row .dl-time { flex: 0 0 150px; }
