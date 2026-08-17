@@ -922,15 +922,17 @@
       '<h3>修改登录密码</h3>'
       + '<div class="mypw-row" style="margin-top:4px">'
         + '<div class="field" style="flex:1;min-width:160px"><label>当前密码</label><input type="password" id="myPwOld" autocomplete="current-password" placeholder="请输入当前密码" /></div>'
-        + '<div class="field" style="flex:1;min-width:160px"><label>新密码（至少 6 位）</label><input type="password" id="myPwNew" autocomplete="new-password" placeholder="请输入新密码" /></div>'
+        + '<div class="field" style="flex:1;min-width:160px"><label>新密码（8 位以上，含大小写+数字+特殊字符）</label><input type="password" id="myPwNew" autocomplete="new-password" placeholder="请输入新密码" /></div>'
         + '<div class="field" style="flex:1;min-width:160px"><label>确认新密码</label><input type="password" id="myPwConfirm" autocomplete="new-password" placeholder="再次输入" /></div>'
       + '</div>'
+      + '<div class="pw-strength" id="myPwMeter"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="lbl" id="myPwMeterLbl"></span></div>'
       + '<div class="login-err" id="myPwErr" style="margin-top:8px;min-height:18px"></div>'
       + '<div class="modal-foot">'
         + '<button type="button" class="btn secondary" data-close>取消</button>'
         + '<button class="btn" id="btnMyPwSave">保存</button>'
       + '</div>';
     openModal(html);
+    attachPwStrength('myPwNew', 'myPwMeter', 'myPwMeterLbl');
     const ps = $('#btnMyPwSave'); if (ps) ps.addEventListener('click', updateMyPassword);
     const cs = $('#modalBox [data-close]'); if (cs) cs.addEventListener('click', () => closeModal());
     setTimeout(() => { const o = $('#myPwOld'); if (o) o.focus(); }, 50);
@@ -1110,6 +1112,15 @@
 
   async function afterLogin() {
     const ov = document.getElementById('loginOverlay'); if (ov) ov.remove();
+    // ══ 强制改密门禁 ══
+    // 被管理员标记为「下次登录必须改密」的设计师，必须先改为本人高强密码才能进入工作台。
+    // 此弹窗不可关闭（无取消/点遮罩关闭），仅「确认修改并进入」或「退出登录」两条出路。
+    // 用 await 等待改密完成，成功后再继续执行下方正常进入逻辑（避免提前 return 导致工作台不渲染）。
+    if (state.currentUser && state.currentUser.force_password_change) {
+      try { hideSplash(); } catch (e) {}
+      const ok = await showForcedPwChange();
+      if (!ok) return;   // 用户选择退出登录，login 已接管
+    }
     // 【关键修复 v432】启动路径（bootAuth）不经过 afterAuthLogin，缺少 DB.reload() 调用，
     // 导致 db.js 内 cache.customers / cache.orders / cache.groups 永远为空数组（DB.init() 仅 loadDesignersOnly）。
     // 结果：loadData() 读到空数据 → persistBusinessCache 存入空缓存 → 下次冷启动显示全零。
@@ -5280,7 +5291,7 @@
     const inProgress = id => orders.filter(o => window.Cfg.participants(o).includes(id) &&
       ['派单', '设计中', '初稿', '客户反馈', '修改中'].includes(o.status)).length;
     $('#settingsDesignersTable').innerHTML =
-      '<thead><tr><th>姓名</th><th>职务</th><th>分组</th><th>进行中</th><th>状态</th><th>参与设计</th><th>参与统计</th><th>参与平均</th><th>操作</th></tr></thead><tbody>' +
+      '<thead><tr><th>姓名</th><th>职务</th><th>分组</th><th>进行中</th><th>状态</th><th>参与设计</th><th>参与统计</th><th>参与平均</th><th>强制改密</th><th>操作</th></tr></thead><tbody>' +
       (ds.length ? ds.map(d => {
         const isAdmin = d.role === '管理员';
         const designOn = isActiveDesign(d);
@@ -5290,16 +5301,20 @@
         const designTitle = isAdmin ? '管理员默认不参与设计接单' : (can('manage_designers') ? '是否可派单/协作/出现在工作台' : '无权限');
         const perfTitle = isAdmin ? '管理员默认不计入团队统计' : (can('manage_designers') ? '是否计入绩效/经营分析统计' : '无权限');
         const avgTitle = isAdmin ? '管理员默认不计入团队平均' : (can('manage_designers') ? '是否纳入团队人均/排名分母' : '无权限');
+        const forceOn = !!d.force_password_change;
+        const forceDisabled = !can('manage_designers');
+        const forceTitle = can('manage_designers') ? (forceOn ? '已标记：该设计师下次登录须改密码' : '勾选后该设计师下次登录须改密码') : '无权限';
         return '<tr><td>' + esc(d.name) + '</td><td>' + esc(d.role) + '</td><td>' + esc(gMap[d.group_id] || '—') + '</td>' +
         '<td class="num">' + inProgress(d.id) + '</td>' +
         '<td><button class="btn sm status-toggle ' + (d.active === false ? 'off' : 'on') + '" data-act="' + d.id + '"' + (disabled ? ' disabled' : '') + '>' + (d.active === false ? '停用' : '在岗') + '</button></td>' +
         '<td style="text-align:center"><label class="tbl-cb"><input type="checkbox" class="design-cb" data-design="' + d.id + '"' + (designOn ? ' checked' : '') + (disabled ? ' disabled' : '') + ' title="' + designTitle + '"><span class="box"></span></label></td>' +
         '<td style="text-align:center"><label class="tbl-cb"><input type="checkbox" class="perf-cb" data-perf="' + d.id + '"' + (perfOn ? ' checked' : '') + (disabled ? ' disabled' : '') + ' title="' + perfTitle + '"><span class="box"></span></label></td>' +
         '<td style="text-align:center"><label class="tbl-cb"><input type="checkbox" class="avg-cb" data-avg="' + d.id + '"' + (avgOn ? ' checked' : '') + (disabled ? ' disabled' : '') + ' title="' + avgTitle + '"><span class="box"></span></label></td>' +
+        '<td style="text-align:center"><label class="tbl-cb"><input type="checkbox" class="forcepw-cb" data-forcepw="' + d.id + '"' + (forceOn ? ' checked' : '') + (forceDisabled ? ' disabled' : '') + ' title="' + forceTitle + '"><span class="box"></span></label></td>' +
         '<td><button class="btn sm" data-rename="' + d.id + '">改名</button> ' +
         '<button class="btn sm" data-pw="' + d.id + '">改密码</button> ' +
         '<button class="btn sm danger" data-del="' + d.id + '">删除</button></td></tr>';
-      }).join('') : '<tr><td colspan="9" class="empty">暂无人员</td></tr>') + '</tbody>';
+      }).join('') : '<tr><td colspan="10" class="empty">暂无人员</td></tr>') + '</tbody>';
     $$('#settingsDesignersTable [data-pw]').forEach(b => b.addEventListener('click', () => setDesignerPassword(b.dataset.pw)));
     $$('#settingsDesignersTable [data-rename]').forEach(b => b.addEventListener('click', () => renameDesigner(b.dataset.rename)));
     $$('#settingsDesignersTable [data-del]').forEach(b => b.addEventListener('click', async () => {
@@ -5359,6 +5374,16 @@
       await DB.saveDesigner({ id: cb.dataset.avg, active_avg: cb.checked });
       state._designers = await DB.listDesigners();
       toast(cb.checked ? '已纳入团队平均' : '已移出团队平均');
+    }));
+    // 「强制改密」开关：管理员标记后，该设计师下次登录必须先改密码
+    $$('#settingsDesignersTable .forcepw-cb').forEach(cb => cb.addEventListener('change', async () => {
+      if (!can('manage_designers')) { cb.checked = !cb.checked; toast('无权限'); return; }
+      const id = cb.dataset.forcepw, on = cb.checked;
+      try {
+        await DB.saveDesigner({ id, force_password_change: on });
+        state._designers = await DB.listDesigners();
+        toast(on ? '已标记：该设计师下次登录须修改密码' : '已取消强制改密');
+      } catch (e) { cb.checked = !on; toast('操作失败：' + ((e && e.message) || e)); }
     }));
     $$('#settingsDesignersTable .status-toggle').forEach(b => b.addEventListener('click', async () => {
       if (!can('manage_designers')) { toast('无权限'); return; }
@@ -5466,7 +5491,8 @@
       const email = (($('#dEmail') && $('#dEmail').value) || '').trim();
       const pw = (($('#dAuthPw') && $('#dAuthPw').value) || '').trim();
       if (!email) { toast('请输入登录邮箱'); return; }
-      if (pw.length < 6) { toast('Auth 登录密码至少 6 位'); return; }
+      const pv = validatePw(pw);
+      if (!pv.ok) { toast(pv.msg); return; }
       let authId = null;
       try {
         const r = await DB.auth.createUser({ email, password: pw, name });
@@ -5476,9 +5502,12 @@
       if ($('#dDesign')) row.active_design = !!($('#dDesign').checked);
       if ($('#dPerf')) row.exclude_perf = !$('#dPerf').checked;
       if ($('#dAvg')) row.active_avg = !!($('#dAvg').checked);
+      // 新账号默认要求首次登录强制改密（管理员代设的密码不算本人密码），管理员可取消勾选
+      if ($('#dForcePw')) row.force_password_change = !!($('#dForcePw').checked);
       await DB.saveDesigner(row);
       logOp('新增人员', '设计师', row.id, name);
       $('#dName').value = ''; if ($('#dEmail')) $('#dEmail').value = ''; if ($('#dAuthPw')) $('#dAuthPw').value = '';
+      if ($('#dForcePw')) $('#dForcePw').checked = true;
       toast('已添加（Auth 账号已创建）'); await refreshAll();
     } finally { unlockOp('addDesigner'); }
   }
@@ -5498,27 +5527,33 @@
     const html = `
       <button class="close" data-close>×</button>
       <h3>修改密码 · ${esc(d.name)}</h3>
-      <div class="field"><label>新密码（至少 4 位）</label><input type="password" id="pwNew" autocomplete="new-password" /></div>
-      <div class="field"><label>确认密码</label><input type="password" id="pwConfirm" autocomplete="new-password" /></div>
+      <div class="field"><label>新密码（8 位以上，含大小写+数字+特殊字符）</label><input type="password" id="pwNew" autocomplete="new-password" placeholder="请输入新密码" /></div>
+      <div class="pw-strength" id="pwMeter"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="lbl" id="pwMeterLbl"></span></div>
+      <div class="field"><label>确认密码</label><input type="password" id="pwConfirm" autocomplete="new-password" placeholder="再次输入" /></div>
+      <label class="tbl-cb" style="margin:8px 0;display:inline-flex"><input type="checkbox" id="pwForce"><span class="box"></span><span style="margin-left:6px">要求该设计师下次登录时修改此密码（强制改密）</span></label>
       <div class="login-err" id="pwErr"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px">
         <button class="btn secondary" data-close>取消</button>
         <button class="btn" id="pwSave">保存</button>
       </div>`;
     openModal(html);
+    attachPwStrength('pwNew', 'pwMeter', 'pwMeterLbl');
     $$('#modalBox [data-close]').forEach(b => b.addEventListener('click', () => closeModal()));
     $('#pwSave').addEventListener('click', async () => {
       if (!lockOp('setPw:' + d.id)) return;
       try {
         const a = $('#pwNew').value || '', b = $('#pwConfirm').value || '';
-        if (a.length < 6) { $('#pwErr').textContent = '密码至少 6 位'; return; }
+        const v = validatePw(a);
+        if (!v.ok) { $('#pwErr').textContent = v.msg; return; }
         if (a !== b) { $('#pwErr').textContent = '两次输入不一致'; return; }
         if (!d.auth_id) { $('#pwErr').textContent = '该设计师尚未创建登录账号（auth_id 为空），无法代设密码'; return; }
+        const force = !!($('#pwForce') && $('#pwForce').checked);
         try {
           await DB.auth.setPassword({ auth_id: d.auth_id, password: a });
         } catch (e) { $('#pwErr').textContent = (e && e.message) || '更新失败'; return; }
+        try { await DB.saveDesigner({ id: d.id, force_password_change: force }); } catch (e) { console.warn('更新强制改密标记失败', e); }
         logOp('重置密码', '设计师', d.id, d.name);
-        closeModal(); toast('密码已更新'); await refreshAll();
+        closeModal(); toast('密码已更新' + (force ? '（已标记为强制改密）' : '')); await refreshAll();
       } finally { unlockOp('setPw:' + d.id); }
     });
   }
@@ -6439,6 +6474,113 @@
       el.textContent = '上次备份：' + d.toLocaleString('zh-CN', { hour12: false }) + '（本设备）';
     } catch (e) { el.textContent = '上次备份：' + raw; }
   }
+  // ───────────────────────────────────────────────────────────
+  // 密码强度校验（公网部署：必须足够安全）
+  // ───────────────────────────────────────────────────────────
+  // 常见弱密码（小写比对），命中则直接拒绝
+  const WEAK_PW = [
+    'password', '12345678', 'qwerty12', 'design123', 'abc12345', 'abc123456',
+    'admin123', 'password1', '11111111', '00000000', 'qwertyui', 'iloveyou',
+    'passw0rd', 'p@ssw0rd', 'qwerty123', 'letmein1', 'zhang123', 'wang1234',
+    'designer1', 'shuji123', 'work1234'
+  ];
+  // 返回强度评分：score 0~4，label 中文等级
+  function checkPwStrength(pw) {
+    if (!pw) return { score: 0, label: '', ok: false };
+    let score = 0;
+    if (pw.length >= 8) score++;
+    if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+    if (/\d/.test(pw)) score++;
+    if (/[^A-Za-z0-9]/.test(pw)) score++;
+    const ok = pw.length >= 8 && /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw);
+    const labels = ['弱', '弱', '中', '强', '很强'];
+    return { score: Math.min(score, 4), label: labels[Math.min(score, 4)], ok };
+  }
+  // 校验新密码是否可用；oldPw 可选（本人改密时需排除与旧密码相同）
+  function validatePw(pw, oldPw) {
+    if (!pw) return { ok: false, msg: '请输入新密码' };
+    if (pw.length < 8) return { ok: false, msg: '密码至少 8 位' };
+    if (!/[a-z]/.test(pw) || !/[A-Z]/.test(pw)) return { ok: false, msg: '需同时包含大写和小写字母' };
+    if (!/\d/.test(pw)) return { ok: false, msg: '需包含数字' };
+    if (!/[^A-Za-z0-9]/.test(pw)) return { ok: false, msg: '需包含特殊字符（如 !@#$%^&*）' };
+    if (oldPw && pw === oldPw) return { ok: false, msg: '新密码不能与当前密码相同' };
+    if (WEAK_PW.indexOf((pw || '').toLowerCase()) >= 0) return { ok: false, msg: '该密码过于常见，请换一个更安全的' };
+    if (/(.)\1\1/.test(pw)) return { ok: false, msg: '密码不能包含连续重复字符（如 111）' };
+    return { ok: true, msg: '' };
+  }
+  // 绑定实时强度条：input 变化时更新 4 根色条 + 文字等级
+  function attachPwStrength(inputId, meterId, lblId) {
+    const input = document.getElementById(inputId);
+    const meter = document.getElementById(meterId);
+    const lbl = lblId ? document.getElementById(lblId) : null;
+    if (!input || !meter) return;
+    const bars = meter.querySelectorAll('.bar');
+    const update = () => {
+      const r = checkPwStrength(input.value);
+      const tier = r.score >= 4 ? 3 : r.score >= 3 ? 2 : r.score >= 2 ? 1 : 0;
+      bars.forEach((b, i) => { b.className = 'bar' + (i < r.score ? ' on' + tier : ''); });
+      if (lbl) lbl.textContent = input.value ? ('强度：' + r.label) : '';
+    };
+    input.addEventListener('input', update);
+    update();
+  }
+
+  // 强制改密弹窗（不可关闭）：登录后若被管理员标记 force_password_change 则弹出。
+  // 必须输入当前密码 + 符合强度规则的新密码 + 确认，成功后清标记并 resolve(true)；
+  // 「退出登录」则 resolve(false)（由 afterLogin 终止进入）。返回 Promise<boolean>。
+  function showForcedPwChange() {
+    const me = state.currentUser;
+    if (!me) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const html =
+        '<div class="modal force-pw-modal">' +
+          '<div class="force-pw-banner">🔒 出于账号安全策略，您当前使用的密码强度不足，<b>必须修改为本人专属的安全密码</b>后才能继续使用。此步骤不可跳过。</div>' +
+          '<h3>修改登录密码</h3>' +
+          '<div class="mypw-row" style="margin-top:4px">' +
+            '<div class="field" style="flex:1;min-width:160px"><label>当前密码</label><input type="password" id="fpwOld" autocomplete="current-password" placeholder="请输入当前密码" /></div>' +
+            '<div class="field" style="flex:1;min-width:160px"><label>新密码（8 位以上，含大小写+数字+特殊字符）</label><input type="password" id="fpwNew" autocomplete="new-password" placeholder="请输入新密码" /></div>' +
+            '<div class="field" style="flex:1;min-width:160px"><label>确认新密码</label><input type="password" id="fpwConfirm" autocomplete="new-password" placeholder="再次输入" /></div>' +
+          '</div>' +
+          '<div class="pw-strength" id="fpwMeter"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="lbl" id="fpwMeterLbl"></span></div>' +
+          '<div class="login-err" id="fpwErr" style="margin-top:8px;min-height:18px"></div>' +
+          '<div class="modal-foot">' +
+            '<button type="button" class="btn secondary" id="fpwLogout">退出登录</button>' +
+            '<button class="btn primary" id="fpwSave">确认修改并进入</button>' +
+          '</div>' +
+        '</div>';
+      openModal(html);
+      attachPwStrength('fpwNew', 'fpwMeter', 'fpwMeterLbl');
+      const save = async () => {
+        if (!lockOp('forcePw')) return;
+        const errEl = $('#fpwErr'); if (errEl) errEl.textContent = '';
+        try {
+          const oldPw = ($('#fpwOld') && $('#fpwOld').value) || '';
+          const a = ($('#fpwNew') && $('#fpwNew').value) || '';
+          const b = ($('#fpwConfirm') && $('#fpwConfirm').value) || '';
+          if (!oldPw) { if (errEl) errEl.textContent = '请输入当前密码'; return; }
+          const v = validatePw(a, oldPw);
+          if (!v.ok) { if (errEl) errEl.textContent = v.msg; return; }
+          if (a !== b) { if (errEl) errEl.textContent = '两次输入的新密码不一致'; return; }
+          // 先以当前密码重新登录验证身份（updateSelfPassword 内部已做），再更新
+          await DB.auth.updateSelfPassword(oldPw, a);
+          // 清除强制改密标记（本人改自己记录，符合 designers_update RLS）
+          try { await DB.saveDesigner({ id: me.id, force_password_change: false }); } catch (e) { console.warn('清除强制改密标记失败', e); }
+          me.force_password_change = false;
+          try { state._designers = await DB.listDesigners(); } catch (e) {}
+          logOp('强制修改密码', '账户');
+          closeModal(true);
+          toast('密码已修改，欢迎使用');
+          resolve(true);
+        } catch (e) {
+          if (errEl) errEl.textContent = (e && e.message) || '修改失败';
+        } finally { unlockOp('forcePw'); }
+      };
+      const sb = $('#fpwSave'); if (sb) sb.addEventListener('click', save);
+      const lo = $('#fpwLogout'); if (lo) lo.addEventListener('click', () => { try { closeModal(true); } catch (e) {} logout(); resolve(false); });
+      setTimeout(() => { const o = $('#fpwOld'); if (o) o.focus(); }, 50);
+    });
+  }
+
   // 本人修改登录密码：校验当前密码 + 两次新密码一致，调用 Supabase 客户端 API
   async function updateMyPassword() {
     if (!lockOp('updateMyPw')) return;
@@ -6448,7 +6590,8 @@
       const a = ($('#myPwNew') && $('#myPwNew').value) || '';
       const b = ($('#myPwConfirm') && $('#myPwConfirm').value) || '';
       if (!oldPw) { if (errEl) errEl.textContent = '请输入当前密码'; return; }
-      if (a.length < 6) { if (errEl) errEl.textContent = '新密码至少 6 位'; return; }
+      const v = validatePw(a, oldPw);
+      if (!v.ok) { if (errEl) errEl.textContent = v.msg; return; }
       if (a !== b) { if (errEl) errEl.textContent = '两次输入的新密码不一致'; return; }
       await DB.auth.updateSelfPassword(oldPw, a);
       logOp('修改密码', '账户');
@@ -6754,30 +6897,6 @@
   }
   // 原启动链路（首装/清缓存/未登录走这里）：25s 最外层兜底防长后台卡死
   function networkBoot() { safeInit(true); }
-
-  // ===== 长后台「温而不热」自动冷重启（v464 新增）=====
-  // 机制：记录进入后台的时间戳；回前台时若已后台超过阈值，直接整页 reload，
-  // 把不可控的「温而不热」(页面假活、首请求要重建到东京的 DNS+TLS+TCP 8~30s) 收敛为确定性冷启动。
-  // 隔离在最外层、仅对长后台触发；切后台几秒即回完全不受影响（v429 铁律：不污染高频正常路径）。
-  // 与 2530 处「前台恢复轻量刷新」并存：超时场景 reload 先行，页面导航放弃在途刷新，无副作用。
-  // 弹窗填写中(#modalMask.show)不强行重启，避免丢未保存数据；保留时间戳待下次无弹窗回前台再触发。
-  const BG_MAX_AGE_MS = 30 * 60 * 1000; // 后台超 30 分钟视为长后台，回前台强制冷重启
-  let _bgEnteredAt = 0;
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { _bgEnteredAt = Date.now(); return; }   // 进后台：记时间戳
-    if (!_bgEnteredAt) return;                                    // 首屏即可见、从未进过后台
-    const age = Date.now() - _bgEnteredAt;
-    if (age <= BG_MAX_AGE_MS) { _bgEnteredAt = 0; return; }       // 短时后台：放行轻量刷新逻辑
-    _bgEnteredAt = 0;                                             // 一次性消费，防重复触发
-    const mask = document.getElementById('modalMask');
-    if (mask && mask.classList.contains('show')) {                // 正在填表 → 不杀，等关闭后再说
-      console.warn('[boot] 后台停留 ' + Math.round(age / 1000) + 's 超阈值，但弹窗打开中，暂缓自动重启');
-      return;
-    }
-    console.warn('[boot] 后台停留 ' + Math.round(age / 1000) + 's 超阈值，强制冷重启以规避「温而不热」');
-    location.reload();
-  });
-
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootApp);
   else bootApp();
 })();

@@ -2590,3 +2590,23 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
   border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;
   font-size: 13px; line-height: 1.5; font-weight: 500;
 }
+
+/* ── 密码强度条（强制改密 / 改密码共用）── */
+.pw-strength { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.pw-strength .bar {
+  flex: 1; height: 6px; border-radius: 3px; background: #e2e8f0;
+  transition: background .2s ease;
+}
+.pw-strength .bar.on0 { background: #ef4444; }
+.pw-strength .bar.on1 { background: #f59e0b; }
+.pw-strength .bar.on2 { background: #eab308; }
+.pw-strength .bar.on3 { background: #22c55e; }
+.pw-strength .lbl { font-size: 12px; color: var(--muted); margin-left: 4px; white-space: nowrap; }
+
+/* 强制改密横幅（登录门禁弹窗内） */
+.force-pw-banner {
+  background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+  padding: 10px 12px; border-radius: 8px; margin-bottom: 12px;
+  font-size: 13px; line-height: 1.6;
+}
+.force-pw-modal .field label { font-weight: 500; }

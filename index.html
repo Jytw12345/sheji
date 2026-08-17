@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css?v464" />
+  <link rel="stylesheet" href="css/styles.css?v465" />
   <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
   <link rel="preload" href="vendor/chart.js?lib1" as="script" />
   <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
@@ -347,13 +347,14 @@
             <!-- 第2行：邮箱 / 密码 -->
             <div class="adf-row">
               <div class="field"><label>登录邮箱</label><input id="dEmail" type="email" placeholder="如：zhangsan@company.com" autocomplete="off" /></div>
-              <div class="field"><label>Auth 密码</label><input id="dAuthPw" type="password" placeholder="至少 6 位" autocomplete="new-password" /></div>
+              <div class="field"><label>Auth 密码</label><input id="dAuthPw" type="password" placeholder="8 位以上，含大小写+数字+特殊字符" autocomplete="new-password" /></div>
             </div>
             <!-- 第3行：选项 + 添加按钮 -->
             <div class="adf-row">
               <label class="cb-inline"><input type="checkbox" id="dDesign" checked /> 可派单</label>
               <label class="cb-inline"><input type="checkbox" id="dPerf" checked /> 计入绩效</label>
               <label class="cb-inline"><input type="checkbox" id="dAvg" checked /> 进团队均值</label>
+              <label class="cb-inline"><input type="checkbox" id="dForcePw" checked /> 首次登录强制改密</label>
               <button class="btn" id="btnAddDesigner">添加</button>
             </div>
           </div>
@@ -480,12 +481,12 @@
   <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
 
   <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
-  <script defer src="js/config.js?v464"></script>
-  <script defer src="js/db.js?v464"></script>
-  <script defer src="js/calc.js?v464"></script>
-  <script defer src="js/charts.js?v464"></script>
-  <script defer src="js/export.js?v464"></script>
-  <script defer src="js/app.js?v464"></script>
+  <script defer src="js/config.js?v465"></script>
+  <script defer src="js/db.js?v465"></script>
+  <script defer src="js/calc.js?v465"></script>
+  <script defer src="js/charts.js?v465"></script>
+  <script defer src="js/export.js?v465"></script>
+  <script defer src="js/app.js?v465"></script>
   <script>
     if ('serviceWorker' in navigator) {
       // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）
