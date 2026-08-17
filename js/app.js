@@ -6754,6 +6754,30 @@
   }
   // 原启动链路（首装/清缓存/未登录走这里）：25s 最外层兜底防长后台卡死
   function networkBoot() { safeInit(true); }
+
+  // ===== 长后台「温而不热」自动冷重启（v464 新增）=====
+  // 机制：记录进入后台的时间戳；回前台时若已后台超过阈值，直接整页 reload，
+  // 把不可控的「温而不热」(页面假活、首请求要重建到东京的 DNS+TLS+TCP 8~30s) 收敛为确定性冷启动。
+  // 隔离在最外层、仅对长后台触发；切后台几秒即回完全不受影响（v429 铁律：不污染高频正常路径）。
+  // 与 2530 处「前台恢复轻量刷新」并存：超时场景 reload 先行，页面导航放弃在途刷新，无副作用。
+  // 弹窗填写中(#modalMask.show)不强行重启，避免丢未保存数据；保留时间戳待下次无弹窗回前台再触发。
+  const BG_MAX_AGE_MS = 30 * 60 * 1000; // 后台超 30 分钟视为长后台，回前台强制冷重启
+  let _bgEnteredAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { _bgEnteredAt = Date.now(); return; }   // 进后台：记时间戳
+    if (!_bgEnteredAt) return;                                    // 首屏即可见、从未进过后台
+    const age = Date.now() - _bgEnteredAt;
+    if (age <= BG_MAX_AGE_MS) { _bgEnteredAt = 0; return; }       // 短时后台：放行轻量刷新逻辑
+    _bgEnteredAt = 0;                                             // 一次性消费，防重复触发
+    const mask = document.getElementById('modalMask');
+    if (mask && mask.classList.contains('show')) {                // 正在填表 → 不杀，等关闭后再说
+      console.warn('[boot] 后台停留 ' + Math.round(age / 1000) + 's 超阈值，但弹窗打开中，暂缓自动重启');
+      return;
+    }
+    console.warn('[boot] 后台停留 ' + Math.round(age / 1000) + 's 超阈值，强制冷重启以规避「温而不热」');
+    location.reload();
+  });
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootApp);
   else bootApp();
 })();
