@@ -88,6 +88,38 @@
   function fromLocalInput(v) { if (!v) return null; const d = new Date(v); return isNaN(d) ? null : d.toISOString(); }
   function pct(v) { return (Math.round(v * 1000) / 10) + '%'; }
   function money(v) { return (Math.round((v || 0) * 100) / 100).toLocaleString('zh-CN'); }
+  function timeAgo(iso) {
+    if (!iso) return '';
+    const diff = Date.now() - new Date(iso).getTime();
+    if (isNaN(diff) || diff < 0) return '刚刚';
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return '刚刚';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + '分钟前';
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + '小时前';
+    const day = Math.floor(hr / 24);
+    if (day < 7) return day + '天前';
+    return new Date(iso).toLocaleDateString('zh-CN');
+  }
+  function truncDesc(s, len) {
+    const t = String(s || '').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    if (t.length <= len) return t;
+    return t.slice(0, len).replace(/\s+\S*$/, '') + '…';
+  }
+  function fmtDeadlineBadge(iso) {
+    if (!iso) return { text: '无截稿时间', cls: 'nr-dl-none' };
+    const t = new Date(iso).getTime();
+    if (isNaN(t)) return null;
+    const diff = t - Date.now();
+    if (diff < 0) return { text: '已截止', cls: 'nr-dl-over' };
+    const hr = Math.floor(diff / 3600000);
+    if (hr < 24) return { text: '剩' + hr + '小时', cls: 'nr-dl-urgent' };
+    const day = Math.floor(hr / 24);
+    if (day < 7) return { text: '剩' + day + '天', cls: 'nr-dl-soon' };
+    return { text: new Date(iso).toLocaleDateString('zh-CN'), cls: 'nr-dl-normal' };
+  }
   function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   /* 平均定稿时间：按数值大小智能切换单位（天 / 小时 / 分钟），避免小单显示成 0.2 天 */
   function fmtCycle(days) {
@@ -2599,29 +2631,139 @@
     }
   }
 
-  // 打开「新需求」面板：列出最近可抢需求，点条目跳抢单平台（绝对 URL）
+  // 打开「新需求」面板：列出最近可抢需求；支持排序、查看详情深链、直接抢单
   async function openNewReqPanel() {
+    const prevLastSeen = state._newReqLastSeen || (() => { try { return localStorage.getItem('ds_newreq_lastseen'); } catch (e) { return null; } })();
     state._newReqUnread = 0;                                 // 打开即视为已读
     try { state._newReqLastSeen = new Date().toISOString(); localStorage.setItem('ds_newreq_lastseen', state._newReqLastSeen); } catch (e) {}
     renderNewReqBadge();
     const panel = $('#newReqPanel'); if (!panel) return;
-    panel.style.display = 'block';
-    panel.innerHTML = '<div class="nr-empty">加载中…</div>';
-    try {
-      const list = await DB.listDrRecentRequirements(10);
-      if (!list || !list.length) { panel.innerHTML = '<div class="nr-empty">暂无可抢需求 🎉</div>'; return; }
-      const baseUrl = (Cfg && Cfg.EXTERNAL_APPS && Cfg.EXTERNAL_APPS.design_platform && Cfg.EXTERNAL_APPS.design_platform.url)
-        || 'https://jytw12345.github.io/xinxifabu/';
-      panel.innerHTML = list.map(r => {
-        return '<a class="nr-item" href="' + baseUrl + '" target="_blank" rel="noopener noreferrer">' +
-          '<div class="nr-title">' + esc(r.title || '未命名需求') + '</div>' +
-          '<div class="nr-meta">' + esc(r.task_type || '其他') +
-          (r.budget ? ' · ¥' + Number(r.budget) : '') +
-          ' · ' + esc(r.publisher_name || '发布者') + '</div>' +
-          '<div class="nr-go">去抢单 →</div>' +
-          '</a>';
+    panel.style.display = 'flex';
+    const baseUrl = (Cfg && Cfg.EXTERNAL_APPS && Cfg.EXTERNAL_APPS.design_platform && Cfg.EXTERNAL_APPS.design_platform.url)
+      || 'https://jytw12345.github.io/xinxifabu/';
+    const reqUrl = (id) => baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + 'req=' + encodeURIComponent(id);
+    panel.innerHTML =
+      '<div class="nr-head">' +
+        '<div class="nr-head-left">' +
+          '<span class="nr-head-title">抢单平台 · 新需求</span>' +
+          '<span class="nr-count"></span>' +
+        '</div>' +
+        '<div class="nr-head-actions">' +
+          '<select class="nr-sort" title="排序方式">' +
+            '<option value="created">最新发布</option>' +
+            '<option value="deadline">截稿最近</option>' +
+            '<option value="budget">金额最高</option>' +
+          '</select>' +
+          '<button class="nr-refresh" title="刷新列表">⟳</button>' +
+          '<button class="nr-close" title="关闭">×</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="nr-body"><div class="nr-empty">加载中…</div></div>';
+    const body = panel.querySelector('.nr-body');
+    const countEl = panel.querySelector('.nr-count');
+    const sortSel = panel.querySelector('.nr-sort');
+    panel.querySelector('.nr-close').addEventListener('click', () => { panel.style.display = 'none'; });
+
+    const renderEmpty = (icon, title, sub) => {
+      body.innerHTML =
+        '<div class="nr-empty">' +
+          '<div class="nr-empty-icon">' + icon + '</div>' +
+          '<div class="nr-empty-title">' + title + '</div>' +
+          (sub ? '<div class="nr-empty-sub">' + sub + '</div>' : '') +
+          '<a class="nr-empty-link" href="' + baseUrl + '" target="_blank" rel="noopener noreferrer">打开抢单平台 →</a>' +
+        '</div>';
+      if (countEl) countEl.textContent = '';
+    };
+
+    const sortList = (list, mode) => {
+      const arr = (list || []).slice();
+      if (mode === 'deadline') arr.sort((a, b) => new Date(a.deadline || '9999').getTime() - new Date(b.deadline || '9999').getTime());
+      else if (mode === 'budget') arr.sort((a, b) => (Number(b.budget) || 0) - (Number(a.budget) || 0));
+      else arr.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      return arr;
+    };
+
+    const renderBody = (list, mode) => {
+      if (!list || !list.length) { renderEmpty('🎉', '暂无可抢需求', '有新需求时会通过铃铛提醒你'); return; }
+      const sorted = sortList(list, mode);
+      body.innerHTML = sorted.map(r => {
+        const isUnread = prevLastSeen && r.created_at && new Date(r.created_at).getTime() > new Date(prevLastSeen).getTime();
+        const dl = fmtDeadlineBadge(r.deadline);
+        const desc = truncDesc(r.description, 68);
+        const hasCoupon = r.coupon_code && String(r.coupon_code).trim() !== '';
+        const price = hasCoupon ? (Number(r.final_amount) || Number(r.budget) || 0) : (Number(r.budget) || 0);
+        return '<div class="nr-item' + (isUnread ? ' nr-unread' : '') + '" data-req="' + esc(r.id) + '">' +
+          '<div class="nr-item-top">' +
+            '<div class="nr-item-title-wrap">' + (isUnread ? '<span class="nr-dot"></span>' : '') +
+              '<span class="nr-item-title">' + esc(r.title || '未命名需求') + '</span>' +
+            '</div>' +
+            '<div class="nr-item-badges">' +
+              (dl ? '<span class="nr-dl ' + dl.cls + '">' + dl.text + '</span>' : '') +
+              (hasCoupon ? '<span class="nr-coupon" title="客户已用代金券/打折券">🎟️ ' + esc(r.coupon_code) + '</span>' : '') +
+              '<span class="nr-budget">' + (hasCoupon ? '券后 ' : '') + '¥' + price.toLocaleString('zh-CN') + '</span>' +
+            '</div>' +
+          '</div>' +
+          (desc ? '<div class="nr-desc">' + esc(desc) + '</div>' : '') +
+          '<div class="nr-item-meta">' +
+            '<span class="nr-tag">' + esc(r.task_type || '其他') + '</span>' +
+            '<span class="nr-pub">' + esc(r.publisher_name || '发布者') + ' · ' + timeAgo(r.created_at) + '</span>' +
+          '</div>' +
+          '<div class="nr-item-foot">' +
+            '<a class="nr-detail" href="' + reqUrl(r.id) + '" target="_blank" rel="noopener noreferrer">查看详情</a>' +
+            '<button class="nr-grab" data-req="' + esc(r.id) + '">抢单</button>' +
+          '</div>' +
+          '</div>';
       }).join('');
-    } catch (e) { panel.innerHTML = '<div class="nr-empty">加载失败，请稍后重试</div>'; }
+    };
+
+    const doGrab = async (reqId) => {
+      if (!reqId) return;
+      const uid = await DB.authUid();
+      const name = (state.currentUser && state.currentUser.name) || '';
+      if (!uid) { toast('未登录，无法抢单'); return; }
+      const btn = body.querySelector('.nr-grab[data-req="' + reqId + '"]');
+      if (btn) { btn.disabled = true; btn.textContent = '抢单中…'; }
+      try {
+        const r1 = await DB.grabDrRequirement(reqId, uid, name);
+        if (!r1 || !r1.ok) { toast('抢单失败：' + ((r1 && r1.msg) || '未知错误')); if (btn) { btn.disabled = false; btn.textContent = '抢单'; } return; }
+        const r2 = await DB.createDrOrder(reqId, uid);
+        if (r2 && r2.ok) toast('✅ 抢单成功，已生成工作台订单 #' + (r2.order_no || ''));
+        else toast('✅ 抢单成功（订单同步：' + ((r2 && r2.msg) || '稍后可在平台查看') + '）');
+        loadList();
+      } catch (e) {
+        toast('抢单异常：' + (e.message || e));
+        if (btn) { btn.disabled = false; btn.textContent = '抢单'; }
+      }
+    };
+    state._nrGrab = doGrab;                                 // 供一次性委托事件调用最新闭包
+
+    // 卡片点击：抢单按钮单独处理；点卡片其它区域打开详情深链（仅绑定一次，避免重复监听）
+    if (!body._nrBound) {
+      body.addEventListener('click', (e) => {
+        const grabBtn = e.target.closest('.nr-grab');
+        if (grabBtn) { e.preventDefault(); e.stopPropagation(); if (state._nrGrab) state._nrGrab(grabBtn.dataset.req); return; }
+        if (e.target.closest('a')) return;                 // 详情链接走默认新窗口打开
+        const item = e.target.closest('.nr-item');
+        if (item) { const link = item.querySelector('.nr-detail'); if (link) window.open(link.href, '_blank', 'noopener'); }
+      });
+      body._nrBound = true;
+    }
+
+    const loadList = async () => {
+      body.innerHTML = '<div class="nr-empty">加载中…</div>';
+      try {
+        const list = await DB.listDrRecentRequirements(12);
+        state._nrList = list;
+        if (countEl) countEl.textContent = (list && list.length) ? list.length + ' 条可抢' : '';
+        renderBody(list, sortSel.value);
+      } catch (e) {
+        renderEmpty('⚠️', '加载失败', '请稍后重试，或点击下方直接前往抢单平台');
+      }
+    };
+    sortSel.addEventListener('change', () => { renderBody(state._nrList, sortSel.value); });
+    const refreshBtn = panel.querySelector('.nr-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', (e) => { e.stopPropagation(); loadList(); });
+    await loadList();
   }
 
   // 【v540】从工作台共享 localStorage 'ds-auth-v1' 读当前 Supabase session。
@@ -2701,6 +2843,12 @@
       if (btn && btn.contains(e.target)) return;
       if (panel.contains(e.target)) return;
       panel.style.display = 'none';
+    });
+    // 【v540】按 Esc 关闭新需求面板
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const panel = $('#newReqPanel');
+      if (panel && panel.style.display !== 'none') panel.style.display = 'none';
     });
     // 【v540】设置页「新需求提醒」开关：localStorage 持久化（纯 UX 偏好，不存云端 settings）
     const nrNotify = $('#sNewReqNotify');
@@ -3163,7 +3311,7 @@
         '<td title="' + esc(o.title || '') + '">' + esc(o.title) + (o.notes ? ' <span title="' + esc(o.notes) + '">📝</span>' : '') + '</td>' +
         '<td title="' + esc(o.customer_name || '') + '">' + esc(o.customer_name || '') + '</td>' +
         '<td>' + esc(o.task_type) + '</td>' +
-        '<td class="num">¥' + money(o.amount) + '</td>' +
+        '<td class="num">¥' + money(o.amount) + (o.coupon_code ? ' <span class="od-coupon-tag" title="客户已用券：' + esc(o.coupon_code) + '">🎟️</span>' : '') + '</td>' +
         '<td class="center">' + catPill(cat) + (o.complaint_count ? ' <span class="badge bad">投诉' + o.complaint_count + '</span>' : '') + '</td>' +
         '<td title="' + esc(designerCell.replace(/<[^>]+>/g, ' ')) + '">' + designerCell + reworkCell + '</td>' +
         '<td class="center">' + pill(o.status) + '</td>' +
@@ -3848,6 +3996,35 @@
     }
   }
 
+  // 【v547】订单代金券/打折券提示横幅：线下收款时一眼看到客户已用券、该收多少
+  function couponBannerHtml(o) {
+    if (!o) return '';
+    let code = (o.coupon_code || '').toString().trim();
+    const origin = Number(o.coupon_origin) || 0;
+    const final = Number(o.amount) || 0;
+    // 兜底：结构化为空，从订单备注里解析「优惠码 X」（旧桥接订单仅 notes 有券信息）
+    if (!code && o.notes) {
+      const m = String(o.notes).match(/优惠码\s*([A-Za-z0-9\-]+)/);
+      if (m) code = m[1];
+    }
+    if (!code) return '';
+    const saved = origin > final ? (origin - final) : 0;
+    let row = '<span class="ocb-code">券码 ' + esc(code) + '</span>';
+    if (origin > 0) {
+      row += '<span class="ocb-origin">原价 ¥' + origin.toLocaleString('zh-CN') + '</span>' +
+        '<span class="ocb-arrow">→</span>';
+    }
+    row += '<span class="ocb-final">实收 ¥' + final.toLocaleString('zh-CN') + '</span>';
+    if (saved > 0) row += '<span class="ocb-saved">省 ¥' + saved.toLocaleString('zh-CN') + '</span>';
+    return '<div class="order-coupon-banner">' +
+      '<span class="ocb-ico">🎟️</span>' +
+      '<div class="ocb-body">' +
+        '<div class="ocb-title">客户已使用代金券 / 打折券</div>' +
+        '<div class="ocb-row">' + row + '</div>' +
+        '<div class="ocb-tip">线下收款请按「实收」金额收取，已扣除券面优惠</div>' +
+      '</div></div>';
+  }
+
   function renderOrderModal() {
     const o = state.editingOrder;
     const ds = state._designers || [], cs = state._customers || [];
@@ -4103,6 +4280,7 @@
         </div>
       </div>
       <div class="modal-scroll">
+        ${couponBannerHtml(o)}
         <div class="flow-detail">${flowBlock}</div>
         <details class="info-collapse" open><summary>订单信息（客户 / 金额 / 设计师 / 截稿时间）</summary>
           ${infoForm}

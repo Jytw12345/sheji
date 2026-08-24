@@ -199,7 +199,7 @@ window.DB = (function () {
     'proposal_at','proposal_count','proposal_failed_at','proposal_pass_at',
     'feedback_at','feedback_failed_at','feedback_pass_at',
     'revision_at','redraft_at','finalized_at','cancel_at','cancel_reason','pre_cancel_status',
-    'switched_at','switch_reason','revision_note','notes',
+    'switched_at','switch_reason','revision_note','notes','coupon_code','coupon_origin',
     'proposal_log','proposal_failed_log','draft_log','revision_log','redraft_log','feedback_failed_log',
     'file_paths','design_paths','temp_assist_log',
     'created_at','updated_at','deleted_at','delete_reason'
@@ -1000,7 +1000,7 @@ window.DB = (function () {
     try {
       const { data, error } = await sb
         .from('dr_requirements')
-        .select('id,title,task_type,budget,publisher_name,created_at,status,deleted_at')
+        .select('id,title,description,task_type,budget,deadline,publisher_name,created_at,status,deleted_at,coupon_code,final_amount')
         .is('deleted_at', null)
         .eq('status', 'open')
         .order('created_at', { ascending: false })
@@ -1008,6 +1008,27 @@ window.DB = (function () {
       if (error) { console.warn('[dr] 查询最近需求失败', error); return []; }
       return data || [];
     } catch (e) { console.warn('[dr] 查询最近需求异常', e); return []; }
+  }
+
+  // 【v547】在工作台直接抢单：调用 xinxifabu 的 dr_grab（原子锁定），返回 {ok,msg}
+  async function grabDrRequirement(reqId, uid, name) {
+    if (!sb || !uid) return { ok: false, msg: '未连接或未登录' };
+    try {
+      const { data, error } = await sb.rpc('dr_grab', { p_req: reqId, p_designer: uid, p_name: name || '' });
+      if (error) throw error;
+      return data || { ok: true };
+    } catch (e) { return { ok: false, msg: e.message || '抢单失败' }; }
+  }
+
+  // 【v547】抢单后把需求落成工作台订单（桥接 xinxifabu 的 dr_create_order，幂等），
+  // 返回 {ok, order_no, order_id, already} 或 {ok:false, msg}
+  async function createDrOrder(reqId, uid) {
+    if (!sb || !uid) return { ok: false, msg: '未连接或未登录' };
+    try {
+      const { data, error } = await sb.rpc('dr_create_order', { p_req: reqId, p_uid: uid });
+      if (error) throw error;
+      return data || { ok: true };
+    } catch (e) { return { ok: false, msg: e.message || '订单同步失败' }; }
   }
 
   // ============================================================
