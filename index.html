@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- 尽早与 Supabase(东京) 建立 DNS+TLS 连接，与 SW 安装/应用 init 重叠，
+       把冷启动「第一次请求」的握手 RTT 移出关键路径（详见 2026-08-23 启动延迟诊断） -->
+  <link rel="preconnect" href="https://menfionjslkqzueyrteb.supabase.co" crossorigin />
+  <title>设计部工作台 · 流程 & 绩效</title>
+  <meta name="theme-color" content="#7c3aed" />
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1e1b4b" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/styles.css?v542" />
+  <link rel="preload" href="vendor/supabase.js?lib1" as="script" />
+  <link rel="preload" href="vendor/chart.js?lib1" as="script" />
+  <!-- 核心库本地化：supabase-js / chart.js 首屏必需，改本地 vendor（SW 预缓存、同源秒取、不依赖外网 CDN），缩短手机端启动画面停留；
+       xlsx(861k) 体积大且非首屏，改为导出时按需动态加载（见 js/app.js ensureXlsxLib） -->
+  <script defer src="vendor/supabase.js?lib1"></script>
+  <script defer src="vendor/chart.js?lib1"></script>
+</head>
+<body>
+  <!-- 启动 Splash：随 HTML 解析立即出现，不依赖任何 JS / CDN，用于消除白屏、实现无感加载 -->
+  <div id="bootSplash" class="boot-splash" style="position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#f5f3ff 0%,#ede9fe 100%);transition:opacity .25s ease;">
+    <div class="boot-splash-inner" style="text-align:center;">
+      <div class="boot-logo">🎨</div>
+      <div class="boot-name">设计部工作台</div>
+      <div class="boot-dots"><span></span><span></span><span></span></div>
+      <div class="boot-tip" id="bootTip">正在启动…</div>
+    </div>
+  </div>
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="topbar-main">
+      <div class="topbar-left">
+        <div class="brand"><span class="logo">🎨</span> <span class="brand-full">设计部工作台</span></div>
+        <div class="userbox" id="userBox"></div>
+      </div>
+      <div class="topbar-search">
+        <input id="globalSearch" class="global-search" name="q" placeholder="搜索订单 / 客户…" autocomplete="nope" />
+        <div id="globalSearchResult" class="gs-result" style="display:none"></div>
+      </div>
+      <div class="topbar-tools">
+        <span id="overdueBadge" class="overdue-badge" title="截稿已逾期的订单" style="display:none"><span class="od-dot"></span><b id="overdueCount">0</b><span class="od-text"> 逾期</span></span>
+        <span class="sync-clock" id="syncStatus" title="上次同步时间">
+          <span class="sc-icon" aria-hidden="true">🕐</span>
+          <span class="sc-lbl" id="syncLabel">已同步</span>
+          <span class="sc-spin" id="syncSpin" aria-hidden="true" style="display:none"></span>
+          <span class="sc-time" id="syncClock">—</span>
+        </span>
+        <button id="btnRefresh" class="btn-refresh" title="刷新数据"><span class="desktop-only">刷新</span><span class="mobile-only" aria-hidden="true">⟳</span></button>
+        <button id="btnJumpPlatform" class="btn-refresh btn-external-app" title="打开需求发布平台（新页面，需重新登录）" data-act="jump-platform"><span class="desktop-only">抢单平台</span><span class="mobile-only" aria-hidden="true">🪪</span></button>
+        <button id="btnNewReq" class="btn-refresh btn-newreq" title="新需求提醒（点开查看抢单平台最新需求）" data-act="new-req" style="display:none"><span class="nr-bell" aria-hidden="true">🔔</span><span class="nr-badge" id="newReqBadge" style="display:none">0</span></button>
+        <div id="newReqPanel" class="newreq-panel" style="display:none"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 导航 -->
+  <nav class="tabs" id="tabs">
+    <button data-tab="dashboard" class="active" data-perm="menu_dashboard">仪表盘</button>
+    <button data-tab="orders" data-perm="menu_orders">订单</button>
+    <button data-tab="designers" data-perm="menu_workbench">工作台</button>
+    <button data-tab="customers" data-perm="menu_customers">客户</button>
+    <button data-tab="analytics" data-perm="menu_analytics">经营分析</button>
+    <button data-tab="settings" data-perm="menu_settings">设置</button>
+  </nav>
+
+  <main>
+    <div id="swipeTrack">
+    <!-- ============ 仪表盘 ============ -->
+    <section id="tab-dashboard" class="active">
+      <div class="page-head">
+        <div><h2>经营仪表盘</h2></div>
+        <div class="dash-ctrl">
+          <div class="row" style="gap:8px;align-items:center">
+            <div class="btn-group" id="dashPeriodGroup" role="tablist" aria-label="考核窗口">
+              <button type="button" class="btn btn-sm active" data-period="current" role="tab" aria-selected="true">本期</button>
+              <button type="button" class="btn btn-sm" data-period="previous" role="tab" aria-selected="false">上期</button>
+            </div>
+            <button class="btn secondary" id="btnDashRefresh">
+              <span class="desktop-inline">刷新数据</span>
+              <span class="mobile-inline">⟳</span>
+            </button>
+          </div>
+          <div class="sub" id="dashWindow">考核窗口加载中…</div>
+        </div>
+      </div>
+      <div class="todo-section">
+        <div class="todo-title">今日待办 <span class="todo-hint">实时数据 · 点击卡片直达订单</span></div>
+        <div class="todo-panel" id="dashTodo"></div>
+      </div>
+      <div class="kpi-grid" id="kpiGrid"></div>
+      <div class="charts-grid" style="margin-top:16px">
+        <div class="card"><div id="chartStatusWin"></div></div>
+        <div class="card"><div id="chartStatus"></div></div>
+        <div class="card"><div id="chartPerf"></div></div>
+        <div class="card"><div id="chartRate"></div></div>
+        <div class="card"><div id="chartTypeWin"></div></div>
+        <div class="card"><div id="chartType"></div></div>
+      </div>
+      <div class="card">
+        <h3>本月绩效速览</h3>
+        <div class="table-scroll"><table class="tbl" id="dashPerfTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ 订单 ============ -->
+    <section id="tab-orders">
+      <div class="page-head">
+        <div><h2>订单管理</h2></div>
+        <div class="row">
+          <button class="btn new-entity-btn" id="btnNewOrder" data-perm="orders_create">+ 新建订单</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="toolbar" id="orderToolbar">
+          <!-- 桌面端：全部一行；移动端：搜索+筛选按钮固定第一行，展开后显示条件 -->
+          <div class="toolbar-main">
+            <!-- 第一行：关键字 + 筛选按钮（始终显示，不换行） -->
+            <div class="toolbar-top">
+              <div class="field" style="flex:1;min-width:0"><label>关键字</label><input id="fKeyword" placeholder="搜单号 / 项目 / 客户…" /></div>
+              <button class="btn btn-filter-toggle mobile-only" id="btnToggleFilter">
+                <span class="filter-icon">&#9881;</span> 筛选
+                <span class="filter-badge" id="filterBadge" style="display:none">0</span>
+              </button>
+            </div>
+            <!-- 展开区域：筛选条件 + 操作按钮（一起流动换行） -->
+            <div class="toolbar-filters">
+              <div class="field"><label>客户</label><select id="fCustomer"><option value="">全部</option></select></div>
+              <div class="field"><label>设计师</label><select id="fDesigner"><option value="">全部</option></select></div>
+              <div class="field"><label>状态</label><select id="fStatus"><option value="">全部</option></select></div>
+              <div class="field"><label>分类</label><select id="fCategory"><option value="">全部</option></select></div>
+              <div class="field"><label>类型</label><select id="fTaskType"><option value="">全部</option></select></div>
+              <div class="field-group custom-date-group" id="customDateGroup">
+                <div class="field date-field"><label>接单时间</label><input type="date" id="fDateFrom" placeholder="开始" /></div>
+                <div class="field date-field"><label>至</label><input type="date" id="fDateTo" placeholder="结束" /></div>
+              </div>
+              <div class="field range-field"><label>时间范围</label><select id="fRange">
+                <option value="all">全部</option>
+                <option value="current">本期</option>
+                <option value="previous">上期</option>
+                <option value="month">本月</option>
+                <option value="lastmonth">上月</option>
+                <option value="3m">近 3 月</option>
+                <option value="custom">自定义</option>
+              </select></div>
+              <div class="field"><label>排序</label><select id="fSort">
+                <option value="desc">最新优先</option>
+                <option value="asc">最早优先</option>
+              </select></div>
+              <button class="btn danger sm" id="btnResetFilter">重置</button>
+              <button class="btn secondary sm" id="btnExportOrders" data-perm="orders_export">导出CSV</button>
+            </div>
+          </div>
+        </div>
+        <div class="risk-filter-bar" id="ordersRiskBar" style="display:none"></div>
+        <div class="table-scroll orders-scroll"><table class="tbl" id="ordersTable"></table></div>
+        <div class="pager" id="ordersPager"></div>
+      </div>
+    </section>
+
+    <!-- ============ 工作台 ============ -->
+    <section id="tab-designers">
+      <div class="page-head">
+        <div class="page-head-left">
+          <div class="wb-title-row">
+            <h2>我的工作台</h2>
+            <div class="wb-view-toggle" id="wbViewToggle">
+              <button type="button" class="wb-view-btn active" data-view="personal">个人视图</button>
+              <button type="button" class="wb-view-btn" data-view="team">团队看板</button>
+              <button type="button" class="wb-view-btn" data-view="load">负荷</button>
+            </div>
+          </div>
+          <div class="sub">选择设计师，查看本人订单任务、进度与时间节点</div>
+        </div>
+        <div class="wb-filters">
+          <div class="field"><label>当前设计师</label><select id="wDesigner"></select></div>
+          <div class="field"><label>状态</label>
+            <select id="wbStatus">
+              <option value="">全部</option>
+              <option value="active">进行中</option>
+              <option value="已定稿">已定稿</option>
+              <option value="已换人">已换人</option>
+            </select>
+          </div>
+          <div class="field"><label>周期</label>
+            <select id="wbPeriod">
+              <option value="">全部</option>
+              <option value="current">本期</option>
+              <option value="previous">上期</option>
+              <option value="thisMonth">本月</option>
+              <option value="lastMonth">上月</option>
+              <option value="thisQuarter">本季度</option>
+              <option value="thisYear">本年</option>
+            </select>
+          </div>
+          <label class="wb-toggle"><input type="checkbox" id="wbAutoHide" checked /> 隐藏已完成（定稿满1天）</label>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row" id="workbenchTop" style="align-items: stretch; gap: 10px; margin-bottom: 16px;">
+          <div id="workbenchStats" class="wb-stat-col"></div>
+          <div id="workbenchKpis" class="wb-kpi-col"></div>
+        </div>
+        <div id="workbenchCards" class="workbench-cards"></div>
+      </div>
+    </section>
+
+    <!-- ============ 客户 ============ -->
+    <section id="tab-customers">
+      <div class="page-head">
+        <div><h2>客户管理</h2><div class="sub desktop-only">下单≥2次自动标记为复购客户</div></div>
+        <button class="btn new-entity-btn" id="btnNewCustomer" data-perm="customers_create">+ 新建客户</button>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <div class="toolbar-main">
+            <div class="toolbar-top">
+              <div class="field" style="flex:1;min-width:0"><label>搜索</label><input id="custSearch" placeholder="名称 / 电话 / 联系人" autocomplete="nope" /></div>
+              <div class="field cust-type-field"><label>类型</label><select id="custTypeFilter">
+                <option value="all">全部客户</option>
+                <option value="repeat">复购客户</option>
+                <option value="new">新客</option>
+              </select></div>
+            </div>
+          </div>
+        </div>
+        <div class="table-scroll customers-scroll"><table class="tbl" id="customersTable"></table></div>
+        <div class="pager" id="customersPager"></div>
+      </div>
+    </section>
+
+    <!-- ============ 经营分析 ============ -->
+    <section id="tab-analytics">
+      <div class="page-head">
+        <div><h2>经营分析</h2><div class="sub" id="anaWindow">统计范围加载中…</div></div>
+        <div class="ana-toolbar">
+          <div class="field" id="anaModeBox">
+            <label>统计方式</label>
+            <div class="btn-group" id="anaModeGroup" role="tablist" aria-label="统计方式">
+              <button type="button" class="btn btn-sm active" data-mode="current" role="tab" aria-selected="true">本期</button>
+              <button type="button" class="btn btn-sm" data-mode="previous" role="tab" aria-selected="false">上期</button>
+              <button type="button" class="btn btn-sm" data-mode="custom" role="tab" aria-selected="false">自定义</button>
+            </div>
+          </div>
+          <div class="field" id="anaRangeBox" style="display:none">
+            <div class="date-pair">
+              <div class="date-field" data-datepicker="anaStart">
+                <input type="text" id="anaStart" placeholder="选择起始日期" readonly />
+                <span class="date-icon">📅</span>
+              </div>
+              <span class="date-sep">至</span>
+              <div class="date-field" data-datepicker="anaEnd">
+                <input type="text" id="anaEnd" placeholder="选择截止日期" readonly />
+                <span class="date-icon">📅</span>
+              </div>
+            </div>
+          </div>
+          <div class="ana-btns">
+            <button class="btn btn-sm" id="btnAnaRefresh">查看</button>
+            <button class="btn secondary btn-sm" id="btnAnaCSV" data-perm="analytics_export"><span class="desktop-only">导出 Excel</span><span class="mobile-only">导出</span></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI：10 项指标 -->
+      <div class="kpi-grid" id="kpiAna"></div>
+
+      <!-- 图表 -->
+      <div class="charts-grid" style="margin-top:16px">
+        <div class="card"><div id="chartDispatch"></div></div>
+        <div class="card"><div id="chartConcurrency"></div></div>
+        <div class="card"><div id="chartPass"></div></div>
+        <div class="card"><div id="chartRework"></div></div>
+      </div>
+
+      <!-- 设计师每日未完工并发曲线 -->
+      <div class="card" style="margin-top:16px">
+        <div class="row" style="align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <h3 style="margin:0">设计师每日未完工并发曲线
+            <span class="sub" style="color:var(--muted);font-weight:400">按所选月份，统计每位设计师每天同时在做的未完工任务数（已定稿/已换人的单不再计入）</span>
+          </h3>
+          <div class="row" style="gap:8px;align-items:flex-end">
+            <div class="field"><label>月份</label><input type="month" id="anaMonth" /></div>
+            <button class="btn secondary" id="btnAnaMonth">生成并发曲线</button>
+          </div>
+        </div>
+        <div id="chartConcurrencyDaily" style="margin-top:12px"></div>
+      </div>
+
+      <!-- 设计师明细 -->
+      <div class="card">
+        <h3>设计师明细</h3>
+        <div class="table-scroll"><table class="tbl" id="anaTable"></table></div>
+      </div>
+
+      <!-- 项目改稿明细 -->
+      <div class="card">
+        <h3>项目改稿 / 返工 / 投诉明细</h3>
+        <div class="table-scroll"><table class="tbl" id="anaProjects"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section id="tab-settings">
+      <div class="page-head"><div><h2>系统设置</h2></div></div>
+      <div>
+        <div class="card" data-perm="manage_settings">
+          <h3>考核参数</h3>
+          <div class="params-grid">
+            <div class="field"><label>小单上限(元，含)</label><input id="sSmallMax" type="number" /></div>
+            <div class="field"><label>大单下限(元，不含)</label><input id="sLargeMin" type="number" /></div>
+            <div class="field"><label>基础绩效工资(元)</label><input id="sBase" type="number" /></div>
+            <div class="field"><label>协作分成默认比例(0~1)</label><input id="sCollabShare" type="number" min="0" max="1" step="0.05" /></div>
+            <div class="field"><label>团队奖门槛1(元)</label><input id="sTa1" type="number" /></div>
+            <div class="field"><label>团队奖金额1(元)</label><input id="sAa1" type="number" /></div>
+            <div class="field"><label>团队奖门槛2(元)</label><input id="sTa2" type="number" /></div>
+            <div class="field"><label>团队奖金额2(元)</label><input id="sAa2" type="number" /></div>
+            <div class="field"><label>小单达标线(单/人)</label><input id="sTarget" type="number" /></div>
+            <div class="field"><label>考核窗口起始日(每月)</label><input id="sWinStart" type="number" min="1" max="31" /></div>
+            <div class="field"><label>考核窗口结束日(每月)</label><input id="sWinEnd" type="number" min="1" max="31" /></div>
+            <div class="field"><label>风险预警缓冲(天)</label><input id="sRiskBuf" type="number" min="0" max="14" step="0.5" /></div>
+            <div class="field"><label>截稿过长提醒(天)</label><input id="sDeadlineWarn" type="number" min="1" max="365" step="1" /></div>
+            <div class="field"><label>新建默认截稿(天)</label><input id="sDefaultDeadlineDays" type="number" min="0" max="365" step="1" /></div>
+            <div class="field auto-dispatch-field">
+              <label>自动派单等待(分钟) <label class="switch switch-sm"><input type="checkbox" id="sAutoDispatch" /><span class="slider"></span></label></label>
+              <input id="sAutoDispatchMin" type="number" min="1" max="1440" step="1" />
+            </div>
+          </div>
+          <div class="sub" style="color:var(--muted);margin:8px 0 0">考核窗口为「上月的起始日 ~ 本月的结束日」之间接单（默认 26 ~ 25）。例如起始日=26、结束日=25 → 上月26日 至 本月25日。风险预警缓冲：预计完成时间落在截稿前该天数内即标黄（临界），默认 1.5 天。</div>
+          <button class="btn" id="btnSaveParams" style="margin-top:10px">保存参数</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>通知偏好</h3>
+        <div class="sub" style="color:var(--muted);margin-bottom:12px">抢单平台(xinxifabu)发布新需求时，工作台顶栏 🔔 实时提醒。关闭后不再弹提醒（本地偏好，不随账号同步）。</div>
+        <div>
+          <label>新需求提醒 <label class="switch switch-sm"><input type="checkbox" id="sNewReqNotify" /><span class="slider"></span></label></label>
+        </div>
+      </div>
+      <div class="card" data-perm="manage_designers">
+        <h3>人员管理</h3>
+        <div class="sub" style="color:var(--muted);margin-bottom:12px">新增/删除人员与分组；人员在岗状态请在列表中管理。</div>
+        <div>
+          <h4 style="margin:0 0 10px">人员列表</h4>
+          <div class="table-scroll"><table class="tbl" id="settingsDesignersTable"></table></div>
+          <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+          <h4 style="margin:0 0 10px">+ 新增人员</h4>
+          <div class="add-designer-form">
+            <!-- 第1行：姓名 / 职务 / 分组 -->
+            <div class="adf-row">
+              <div class="field"><label>姓名</label><input id="dName" placeholder="如：张三" /></div>
+              <div class="field"><label>职务</label><select id="dRole"></select></div>
+              <div class="field"><label>分组</label><select id="dGroup"><option value="">未分组</option></select></div>
+            </div>
+            <!-- 第2行：邮箱 / 密码 -->
+            <div class="adf-row">
+              <div class="field"><label>登录邮箱</label><input id="dEmail" type="email" placeholder="如：zhangsan@company.com" autocomplete="off" /></div>
+              <div class="field"><label>Auth 密码</label><input id="dAuthPw" type="password" placeholder="8 位以上，含大小写+数字+特殊字符" autocomplete="new-password" /></div>
+            </div>
+            <!-- 第3行：选项 + 添加按钮 -->
+            <div class="adf-row">
+              <label class="cb-inline"><input type="checkbox" id="dDesign" checked /> 可派单</label>
+              <label class="cb-inline"><input type="checkbox" id="dPerf" checked /> 计入绩效</label>
+              <label class="cb-inline"><input type="checkbox" id="dAvg" checked /> 进团队均值</label>
+              <label class="cb-inline"><input type="checkbox" id="dForcePw" checked /> 首次登录强制改密</label>
+              <button class="btn" id="btnAddDesigner">添加</button>
+            </div>
+          </div>
+        </div>
+      <!-- 分组管理独立成卡，与人员管理层级更清晰 -->
+      <div class="card" data-perm="manage_designers">
+        <h3>分组管理</h3>
+        <div class="sub" style="color:var(--muted);margin-bottom:12px">新建/删除分组，并维护分组成员。</div>
+        <div class="group-cards" id="settingsGroupsCards"></div>
+        <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+        <div class="row">
+          <div class="field" style="flex:2"><label>新分组名称</label><input id="gName" placeholder="如：平面组" /></div>
+          <button class="btn" id="btnAddGroup" style="align-self:flex-end;margin-bottom:0">添加</button>
+        </div>
+
+        <!-- 分组成员编辑抽屉 -->
+        <div id="groupEditPanel" class="group-edit-panel" style="display:none">
+          <div class="group-edit-header">
+            <h4 id="groupEditTitle">分组成员</h4>
+            <button type="button" class="btn secondary btn-sm" id="btnCloseGroupEdit">关闭</button>
+          </div>
+          <div class="group-edit-body">
+            <div class="group-member-list" id="groupMemberList"></div>
+            <div class="group-add-member" id="groupAddMemberBox">
+              <label style="font-size:12px;color:var(--muted)">添加成员</label>
+              <div class="row" style="gap:8px;margin-top:4px">
+                <div class="field" style="flex:1;margin:0"><select id="groupAddMemberSelect"><option value="">选择人员</option></select></div>
+                <button class="btn" id="btnGroupAddMember" style="align-self:flex-end;margin-bottom:0">添加</button>
+              </div>
+            </div>
+          </div>
+          <div class="group-edit-footer">
+            <button class="btn sm danger" id="btnDeleteGroup">删除分组</button>
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <div class="card" data-perm="manage_data">
+        <h3>数据管理</h3>
+        <p class="sub" style="color:var(--muted)">导出全部业务数据为 JSON 备份。正式使用期间不再提供「载入示例数据、清空数据、本地推送云端」等演示/高危操作。</p>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button class="btn secondary" id="btnExportAll">导出全部(JSON)</button>
+          <span class="sub" id="lastBackupHint" style="color:var(--muted)">—</span>
+        </div>
+      </div>
+      <div class="card" id="settingsRecycle" style="display:none">
+        <h3>回收站 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员/店长）</span></h3>
+        <p class="sub" style="color:var(--muted);margin:8px 0 12px">订单/客户删除后进入回收站，可在此还原或彻底删除。彻底删除不可恢复。</p>
+        <div id="recycleBinList" class="table-scroll"></div>
+      </div>
+
+      <div class="card" id="settingsLoginSec" style="display:none">
+        <h3>登录安全管理 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员）</span></h3>
+        <p class="sub" style="color:var(--muted);margin:8px 0 12px">查看因登录失败过多被锁定的账号，可手动解除锁定（清空其失败记录，立即恢复登录）。</p>
+        <div id="loginSecList" class="table-scroll"></div>
+      </div>
+
+      <div class="card collapsible" data-perm="manage_permissions">
+        <h3 class="card-toggle">权限配置 <span class="sub" style="font-weight:400;color:var(--muted)">（仅管理员）</span></h3>
+        <div class="card-collapse">
+        <p class="sub" style="color:var(--muted);margin-bottom:10px">为「管理员 / 店长 / 设计师」三个职务设置各菜单与按钮的默认显隐，并可对单个设计师做个性化覆盖。修改即时生效。</p>
+        <div id="permConfigBox"></div>
+        </div>
+      </div>
+
+      <div class="card collapsible" data-perm="view_logs">
+        <h3 class="card-toggle">操作日志</h3>
+        <div class="card-collapse">
+        <p class="sub" style="color:var(--muted);margin-bottom:12px">记录登录、订单/客户增删改、流程推进与回退、参数保存、人员管理、密码修改等人员操作。管理员/店长可查看全部；设计师仅可见本人操作。</p>
+        <div class="log-filters">
+          <div class="field log-filter-field log-filter-half"><label>人员</label><select id="logDesigner" class="log-filter-select"><option value="">全部</option></select></div>
+          <div class="field log-filter-field log-filter-half"><label>操作类型</label>
+            <select id="logAction" class="log-filter-select">
+              <option value="">全部</option>
+              <option value="登录">登录</option>
+              <option value="登出">登出</option>
+              <option value="新建订单">新建订单</option>
+              <option value="编辑订单">编辑订单</option>
+              <option value="删除订单">删除订单</option>
+              <option value="推进流程">推进流程</option>
+              <option value="回退流程">回退流程</option>
+              <option value="新建客户">新建客户</option>
+              <option value="编辑客户">编辑客户</option>
+              <option value="删除客户">删除客户</option>
+              <option value="保存参数">保存参数</option>
+              <option value="新增人员">新增人员</option>
+              <option value="删除人员">删除人员</option>
+              <option value="重置密码">重置密码</option>
+              <option value="修改密码">修改密码</option>
+            </select>
+          </div>
+          <div class="field log-filter-field log-filter-half"><label>起始日期</label><input id="logFrom" type="date" /></div>
+          <div class="field log-filter-field log-filter-half"><label>截止日期</label><input id="logTo" type="date" /></div>
+          <button class="btn" id="btnLogQuery" style="align-self:flex-end;margin-bottom:0">查询</button>
+        </div>
+        <div class="sub" style="color:var(--muted);margin:8px 0">最多显示最近 300 条，按时间倒序。</div>
+        <div class="table-scroll"><table class="tbl" id="logTable"></table></div>
+        </div>
+      </div>
+      <!-- 关于：显示当前运行的资源版本（读自 sw.js 的 CACHE 常量），并可手动检查更新。
+           原先是右下角常驻浮层，对所有人可见；移到此处后受 menu_settings 权限保护。 -->
+      <div class="card">
+        <h3>关于</h3>
+        <div class="sub" style="color:var(--muted);margin:8px 0">
+          资源版本：<b id="resVersionText">读取中…</b>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn" id="btnCheckUpdate">检查更新</button>
+          <span class="sub" id="checkUpdateHint" style="color:var(--muted)"></span>
+        </div>
+      </div>
+    </section>
+    </div>
+  </main>
+
+  <!-- 日历面板（全局唯一，由 JS 定位；置于 #swipeTrack 之外，避免横向轨道 transform 偏移） -->
+  <div id="datePickerPanel" class="dp-panel" style="display:none"></div>
+
+  <!-- 通用模态框 -->
+  <div class="modal-mask" id="modalMask">
+    <div class="modal" id="modalBox"></div>
+  </div>
+  <div class="toast" id="toast"><span class="toast-icon" id="toastIcon"></span><span class="toast-text" id="toastText"></span></div>
+
+  <!-- 本地脚本（依赖顺序：config → db → calc → charts → export → app；均 defer，保证 vendor 库先于 app.js 执行） -->
+  <script defer src="js/config.js?v542"></script>
+  <script defer src="js/db.js?v542"></script>
+  <script defer src="js/calc.js?v542"></script>
+  <script defer src="js/charts.js?v542"></script>
+  <script defer src="js/export.js?v542"></script>
+  <script defer src="js/app.js?v542"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      // 捕获「可安装」事件：保存 deferredPrompt，登录界面据此显示安装按钮（部分浏览器不触发，按钮不出现）
+      let deferredPrompt = null;
+      const refreshInstallBtn = () => { if (window.__refreshInstallBtn) window.__refreshInstallBtn(!!deferredPrompt); };
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        window.__deferredPrompt = e;
+        refreshInstallBtn();
+      });
+      window.__promptInstall = () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const done = () => { deferredPrompt = null; window.__deferredPrompt = null; refreshInstallBtn(); };
+        deferredPrompt.userChoice.then(done).catch(done);
+      };
+      window.addEventListener('appinstalled', () => {
+        deferredPrompt = null; window.__deferredPrompt = null; refreshInstallBtn();
+      });
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((reg) => {
+      window.__swReg = reg;
+      // 收听 SW 上报的运行版本（activate 时主动推送 + 本页注册时主动查询），
+      // 用于「设置→关于」显示「真实运行版本」而非「磁盘最新版」，消除版本号悖论。
+      navigator.serviceWorker.addEventListener('message', (e) => {
+        if (e.data && e.data.type === 'SW_VERSION') window.__swVersion = e.data.v;
+      });
+      // 注册完成后向当前激活的 SW 查询其运行版本（刷新后无 activate 事件也会补全）
+      if (reg.active) { try { reg.active.postMessage({ type: 'GET_SW_VERSION' }); } catch (e) {} }
+      const hasOpenModal = () => !!document.querySelector('#modalMask.show');
+      const forceUpdate = !!(window.Cfg && window.Cfg.FORCE_UPDATE);
+      // 检测到新版本：一律先弹「发现新版本」浮层，绝不无提示直接重载
+      //（凭空刷新会被用户误认为程序闪退）。
+      //  - 自动模式 且 当前无打开的弹窗 → 浮层带倒计时，到点自动更新，期间可点「稍后」中止
+      //  - 提示模式 或 正开着弹窗填表   → 不倒计时，必须用户点「立即更新」，防丢未保存数据
+      const notify = () => {
+        const auto = forceUpdate && !hasOpenModal();
+        if (window.showAppUpdate) { window.showAppUpdate(auto); return; }
+        // app.js 尚未就绪（极早期触发）：延后重试一次；仍不可用则本次不打扰，
+        // 下次进入应用时 reg.waiting 分支会再提示。
+        setTimeout(() => { if (window.showAppUpdate) window.showAppUpdate(auto); }, 2500);
+      };
+      // 周期性检查更新：浏览器只在页面加载注册 SW 时自动查一次。
+      // PWA 独立窗口/手机端常常长时间挂着不重启，仅靠那一次检查会完全收不到新版本
+      //（表现为「我发版了，用户却一直是旧版」）。这里补上定时 + 回到前台时检查，
+      // 并做 60s 节流，避免频繁切窗时反复请求 sw.js。
+      let lastCheck = 0;
+      // force=true 用于「设置 → 关于 → 检查更新」手动触发，跳过节流；返回 Promise 供 UI 给反馈。
+      const checkUpdate = (force) => {
+        const now = Date.now();
+        if (!force && now - lastCheck < 60000) return Promise.resolve(false);
+        lastCheck = now;
+        try { return Promise.resolve(reg.update()).then(() => true).catch(() => false); }
+        catch (e) { return Promise.resolve(false); }
+      };
+      setInterval(() => checkUpdate(), 5 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+      // 注意必须包一层箭头函数：直接传 checkUpdate 会把 Event 对象当作 force 参数（truthy），使节流失效
+      window.addEventListener('focus', () => checkUpdate());
+      window.__swCheckUpdate = () => checkUpdate(true);
+          // 检测到新版本（安装完成且页面已被旧 SW 控制 → 说明是更新而非首装）
+          reg.addEventListener('updatefound', () => {
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', () => {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) notify();
+            });
+          });
+          // 若加载时已有等待中的新 SW（上次没点更新）
+          if (reg.waiting && navigator.serviceWorker.controller) setTimeout(notify, 1500);
+          // 用户点「立即更新」后置位，待新 SW 接管页面时再真正刷新
+          let pendingUpdate = false;
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (pendingUpdate) { pendingUpdate = false; window.location.reload(); }
+          });
+          window.__swPendingUpdate = () => { pendingUpdate = true; };
+        }).catch((e) => console.warn('Service Worker 注册失败：', e));
+      });
+    }
+  </script>
+  <script>
+    // 读取当前资源版本（来自 sw.js 的 CACHE 常量）。
+    // 原为右下角常驻浮层 + 每次加载自动 fetch；现改为按需调用，由「设置 → 关于」触发，
+    // 既避免对普通员工暴露调试信息，也省掉每次进页面白跑一次网络请求。
+    window.__readResVersion = async function () {
+      // 优先返回「当前实际运行（控制页面）的 SW 版本」：该版本由 SW 通过消息上报并缓存在
+      // window.__swVersion，与运行时严格一致，避免「About 显示最新版但运行时还是旧版」的困惑。
+      if (window.__swVersion) return window.__swVersion;
+      try {
+        const txt = await fetch('./sw.js?t=' + Date.now(), { cache: 'no-store' }).then(r => r.text());
+        const m = txt.match(/const CACHE = '([^']+)'/);
+        return (m && m[1]) || '未知';
+      } catch (e) { return '未知（离线）'; }
+    };
+  </script>
+</body>
+</html>
