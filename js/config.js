@@ -45,7 +45,7 @@ window.Cfg = (function () {
       // （仓库名 xinxifabu，已从 sheji-main 拆出独立仓库，各自独立发版）
       // 若启用自定义子域（如 design.jytw12345.com），改为对应绝对 URL 即可。
       url: "https://jytw12345.github.io/xinxifabu/",
-      tip: "将打开需求发布平台（共用账号体系，需在新页面重新登录）"
+      tip: "已自动登录抢单平台（复用工作台登录态，无需重新输入）"
     }
   };
    // 自动更新前的倒计时秒数（给用户中止的机会，最小 3）

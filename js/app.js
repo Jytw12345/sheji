@@ -2614,6 +2614,20 @@
     } catch (e) { panel.innerHTML = '<div class="nr-empty">加载失败，请稍后重试</div>'; }
   }
 
+  // 【v540】从工作台共享 localStorage 'ds-auth-v1' 读当前 Supabase session。
+  // 用途：跳转到 xinxifabu 时把 token 拼到 URL hash，免去在新页面再次输入账号密码。
+  // expires_at 过期不直接拒绝：xinxifabu 收到后会调 setSession，内部会用 refresh_token 自动续 access_token
+  // （续失败才回退到登录页，行为可控）。
+  function tryGetWorkbenchSession() {
+    try {
+      const raw = localStorage.getItem('ds-auth-v1');
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (!obj || !obj.access_token || !obj.refresh_token) return null;
+      return obj;
+    } catch (e) { return null; }
+  }
+
   function bindGlobal() {
     // 全局事件探测：仅 ?debug=1 时绑定，用于诊断扩展/遮罩拦截事件问题；默认不挂载，零性能影响
     if (/[?&]debug=1\b/.test(location.search)) {
@@ -2636,18 +2650,28 @@
     });
     // 【v537】跳转「需求发布平台」：新窗口打开新 PWA（同站子路径，token 隔离，需重新登录）
     // 使用绝对 URL，避免在 PWA 独立窗口 / SW 拦截 / 带 query 页面下相对路径解析偏移
+    // 【v540】跳转「需求发布平台」：新窗口打开新 PWA。
+    // 若工作台已登录，把 access_token/refresh_token 拼到 URL hash 传过去，xinxifabu 启动时
+    // 自动 setSession 复用登录态——实现"点按钮直达，零输入"快速登录。
+    // token 仅放 # 后（hash），不会随 HTTP 请求发到服务器；setSession 后 xinxifabu 立即清 hash。
     const btnJump = $('#btnJumpPlatform');
-    if (btnJump && !btnJump._v537Bound) {
-      btnJump._v537Bound = true;
+    if (btnJump && !btnJump._v540Bound) {
+      btnJump._v540Bound = true;
       btnJump.addEventListener('click', (e) => {
         e.preventDefault();
         const app = (Cfg && Cfg.EXTERNAL_APPS && Cfg.EXTERNAL_APPS.design_platform) || {};
         // 兜底也用绝对 URL，避免 PWA 独立窗口 / SW 拦截 / 带 query 页面下相对路径解析偏移
         // 独立仓库后地址为 https://jytw12345.github.io/xinxifabu/（仓库名 xinxifabu，无 /sheji/ 一级）
-        const url = app.url || 'https://jytw12345.github.io/xinxifabu/';
+        let url = app.url || 'https://jytw12345.github.io/xinxifabu/';
+        // 已登录：把共享 storageKey 'ds-auth-v1' 里的 session token 拼到 hash
+        const sessionToken = tryGetWorkbenchSession();
+        if (sessionToken) {
+          url += '#access_token=' + encodeURIComponent(sessionToken.access_token)
+               + '&refresh_token=' + encodeURIComponent(sessionToken.refresh_token);
+        }
         const win = window.open(url, '_blank', 'noopener,noreferrer');
         if (!win) toast('浏览器拦截了新窗口，请允许弹窗后重试');
-        else if (app.tip) toast(app.tip);
+        else toast(sessionToken ? '已自动登录抢单平台' : (app.tip || '请在新窗口登录'));
       });
     }
     // 【v540】点击「新需求」铃铛：打开提醒面板（列表内点条目直接跳抢单平台）
