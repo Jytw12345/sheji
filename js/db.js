@@ -1000,7 +1000,7 @@ window.DB = (function () {
     try {
       const { data, error } = await sb
         .from('dr_requirements')
-        .select('id,title,description,task_type,budget,deadline,publisher_name,created_at,status,deleted_at,coupon_code,final_amount')
+        .select('id,title,description,task_type,budget,deadline,publisher_name,created_at,status,deleted_at,coupon_code,final_amount,attachments')
         .is('deleted_at', null)
         .eq('status', 'open')
         .order('created_at', { ascending: false })

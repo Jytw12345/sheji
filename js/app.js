@@ -109,16 +109,17 @@
     return t.slice(0, len).replace(/\s+\S*$/, '') + '…';
   }
   function fmtDeadlineBadge(iso) {
-    if (!iso) return { text: '无截稿时间', cls: 'nr-dl-none' };
+    if (!iso) return { text: '无截稿时间', cls: 'nr-dl-none', full: '' };
     const t = new Date(iso).getTime();
     if (isNaN(t)) return null;
+    const full = new Date(iso).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-');
     const diff = t - Date.now();
-    if (diff < 0) return { text: '已截止', cls: 'nr-dl-over' };
+    if (diff < 0) return { text: '已截止', cls: 'nr-dl-over', full };
     const hr = Math.floor(diff / 3600000);
-    if (hr < 24) return { text: '剩' + hr + '小时', cls: 'nr-dl-urgent' };
+    if (hr < 24) return { text: '剩' + hr + '小时 · ' + full, cls: 'nr-dl-urgent', full };
     const day = Math.floor(hr / 24);
-    if (day < 7) return { text: '剩' + day + '天', cls: 'nr-dl-soon' };
-    return { text: new Date(iso).toLocaleDateString('zh-CN'), cls: 'nr-dl-normal' };
+    if (day < 7) return { text: '剩' + day + '天 · ' + full, cls: 'nr-dl-soon', full };
+    return { text: full + ' 截稿', cls: 'nr-dl-normal', full };
   }
   function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   /* 平均定稿时间：按数值大小智能切换单位（天 / 小时 / 分钟），避免小单显示成 0.2 天 */
@@ -938,11 +939,23 @@
     const box = $('#userBox');
     if (!box) return;
     if (!u) { box.innerHTML = ''; return; }
-    box.innerHTML = '<button type="button" class="ub-name" id="btnIdentity" title="点击查看身份">'
+    box.innerHTML = '<button type="button" class="ub-name" id="btnIdentity" title="点击查看身份" data-full-name="' + esc(u.name) + '">'
         + esc(u.name) + '</button>'
       + '<span class="ub-role role-' + esc(u.role) + ' desktop-only">' + esc(u.role) + '</span>';
     const ib = $('#btnIdentity'); if (ib) ib.addEventListener('click', openIdentity);
+    syncUserBoxText();
   }
+  /* 窄屏顶栏用户名只显示姓氏/首字；JS 兜底截断，避免字体或容器宽度导致仍露出多字 */
+  function syncUserBoxText() {
+    const ib = $('#btnIdentity');
+    if (!ib) return;
+    const full = ib.getAttribute('data-full-name') || ib.textContent || '';
+    if (!full) return;
+    const narrow = window.innerWidth <= 640;
+    const text = narrow ? full.slice(0, 1) : full;
+    if (ib.textContent !== text) ib.textContent = text;
+  }
+  window.addEventListener('resize', () => { syncUserBoxText(); });
 
   // 点击顶栏人名 → 弹出身份详情（含退出登录、修改密码入口）
   function openIdentity() {
@@ -2631,6 +2644,48 @@
     }
   }
 
+  // 【v558】在工作台弹窗内渲染需求详情（不跳转抢单平台），返回 HTML 字符串
+  function renderNrDetail(r, reqHref, baseUrl) {
+    if (!r) return '';
+    const budgetRaw = Number(r.budget) || 0;
+    const finalRaw = Number(r.final_amount) || 0;
+    const hasCoupon = !!r.coupon_code && String(r.coupon_code).trim() !== '' && finalRaw > 0 && finalRaw < budgetRaw;
+    const saved = hasCoupon ? (budgetRaw - finalRaw) : 0;
+    const dl = fmtDeadlineBadge(r.deadline);
+    const dlFull = r.deadline ? fmtTime(r.deadline) + (new Date(r.deadline).getTime() > Date.now() ? '（剩' + Math.max(0, (new Date(r.deadline).getTime() - Date.now()) / 3600000 | 0) + '小时）' : '') : '不限';
+    const atts = Array.isArray(r.attachments) ? r.attachments : [];
+    let meta = '';
+    meta += '<div class="nrd-item"><div class="nrd-label">预算</div><div class="nrd-value">' +
+      (budgetRaw > 0 ? (hasCoupon ? '¥' + budgetRaw.toLocaleString('zh-CN') + ' → <b class="nrd-final">¥' + finalRaw.toLocaleString('zh-CN') + '</b>' : '¥' + budgetRaw.toLocaleString('zh-CN')) : '面议') +
+      '</div></div>';
+    meta += '<div class="nrd-item"><div class="nrd-label">截止时间</div><div class="nrd-value">' + esc(dlFull) + '</div></div>';
+    meta += '<div class="nrd-item"><div class="nrd-label">任务类型</div><div class="nrd-value">' + esc(r.task_type || '其他') + '</div></div>';
+    meta += '<div class="nrd-item"><div class="nrd-label">发布时间</div><div class="nrd-value">' + (r.created_at ? esc(fmtTime(r.created_at)) : '—') + '</div></div>';
+    const couponHtml = hasCoupon
+      ? '<div class="nrd-coupon">已使用优惠码 <b>' + esc(r.coupon_code) + '</b>，券后 ¥' + finalRaw.toLocaleString('zh-CN') + (saved > 0 ? '（省 ¥' + saved.toLocaleString('zh-CN') + '）' : '') + '</div>'
+      : '';
+    const refsHtml = atts.length
+      ? '<div class="nrd-section"><div class="nrd-label">参考图 / 素材（' + atts.length + '）</div>' +
+        '<div class="nrd-refs">' + atts.map(a =>
+          '<a class="nrd-ref" href="' + esc(a.url || '') + '" target="_blank" rel="noopener noreferrer" title="' + esc(a.name || '查看') + '">' +
+            (a.mime && String(a.mime).startsWith('image/')
+              ? '<img src="' + esc(a.url || '') + '" alt="' + esc(a.name || '') + '" loading="lazy" />'
+              : '<span class="nrd-file">📎 ' + esc(a.name || '文件') + '</span>') +
+          '</a>').join('') + '</div></div>'
+      : '';
+    return '' +
+      '<h3 class="nrd-title">' + esc(r.title || '未命名需求') + '</h3>' +
+      (dl ? '<div class="nrd-dl ' + dl.cls + '">' + dl.text + '</div>' : '') +
+      '<div class="nrd-meta">' + meta + '</div>' +
+      couponHtml +
+      '<div class="nrd-section"><div class="nrd-label">需求描述</div><div class="nrd-desc">' + esc(r.description || '（无描述）') + '</div></div>' +
+      refsHtml +
+      '<div class="nrd-section"><div class="nrd-label">发布者</div><div class="nrd-pub">' + esc(r.publisher_name || '发布者') + '</div></div>' +
+      '<div class="nrd-actions">' +
+        '<a class="nrd-open-link" href="' + esc(reqHref || baseUrl) + '" target="_blank" rel="noopener noreferrer">在抢单平台查看 / 沟通 →</a>' +
+      '</div>';
+  }
+
   // 打开「新需求」面板：列出最近可抢需求；支持排序、查看详情深链、直接抢单
   async function openNewReqPanel() {
     const prevLastSeen = state._newReqLastSeen || (() => { try { return localStorage.getItem('ds_newreq_lastseen'); } catch (e) { return null; } })();
@@ -2658,8 +2713,20 @@
           '<button class="nr-close" title="关闭">×</button>' +
         '</div>' +
       '</div>' +
-      '<div class="nr-body"><div class="nr-empty">加载中…</div></div>';
+      '<div class="nr-body"><div class="nr-empty">加载中…</div></div>' +
+      '<div class="nr-detail-view" style="display:none">' +
+        '<div class="nrd-head"><button class="nrd-back" type="button">← 返回</button>' +
+          '<span class="nrd-head-title">需求详情</span></div>' +
+        '<div class="nrd-body"></div>' +
+      '</div>';
     const body = panel.querySelector('.nr-body');
+    const detailView = panel.querySelector('.nr-detail-view');
+    const detailBody = panel.querySelector('.nrd-body');
+    const nrdBack = panel.querySelector('.nrd-back');
+    if (nrdBack && !nrdBack._bound) {
+      nrdBack.addEventListener('click', () => { detailView.style.display = 'none'; body.style.display = ''; });
+      nrdBack._bound = true;
+    }
     const countEl = panel.querySelector('.nr-count');
     const sortSel = panel.querySelector('.nr-sort');
     panel.querySelector('.nr-close').addEventListener('click', () => { panel.style.display = 'none'; });
@@ -2691,17 +2758,18 @@
         const dl = fmtDeadlineBadge(r.deadline);
         const desc = truncDesc(r.description, 68);
         const hasCoupon = r.coupon_code && String(r.coupon_code).trim() !== '';
-        const price = hasCoupon ? (Number(r.final_amount) || Number(r.budget) || 0) : (Number(r.budget) || 0);
+        const budget = Number(r.budget) || 0;
+        const finalAmt = hasCoupon ? (Number(r.final_amount) || budget) : budget;
+        const saved = hasCoupon ? (budget - finalAmt) : 0;
         return '<div class="nr-item' + (isUnread ? ' nr-unread' : '') + '" data-req="' + esc(r.id) + '">' +
-          '<div class="nr-item-top">' +
-            '<div class="nr-item-title-wrap">' + (isUnread ? '<span class="nr-dot"></span>' : '') +
-              '<span class="nr-item-title">' + esc(r.title || '未命名需求') + '</span>' +
-            '</div>' +
-            '<div class="nr-item-badges">' +
-              (dl ? '<span class="nr-dl ' + dl.cls + '">' + dl.text + '</span>' : '') +
-              (hasCoupon ? '<span class="nr-coupon" title="客户已用代金券/打折券">🎟️ ' + esc(r.coupon_code) + '</span>' : '') +
-              '<span class="nr-budget">' + (hasCoupon ? '券后 ' : '') + '¥' + price.toLocaleString('zh-CN') + '</span>' +
-            '</div>' +
+          '<div class="nr-item-head">' + (isUnread ? '<span class="nr-dot"></span>' : '') +
+            '<span class="nr-item-title">' + esc(r.title || '未命名需求') + '</span>' +
+          '</div>' +
+          '<div class="nr-item-badges">' +
+            (dl ? '<span class="nr-dl ' + dl.cls + '">' + dl.text + '</span>' : '') +
+            '<span class="nr-budget' + (hasCoupon ? ' nr-budget-coupon' : '') + '">' +
+              (hasCoupon ? '🎟️ 券后 ¥' + finalAmt.toLocaleString('zh-CN') + (saved > 0 ? ' · 省 ¥' + saved.toLocaleString('zh-CN') : '') : '¥' + finalAmt.toLocaleString('zh-CN')) +
+            '</span>' +
           '</div>' +
           (desc ? '<div class="nr-desc">' + esc(desc) + '</div>' : '') +
           '<div class="nr-item-meta">' +
@@ -2709,7 +2777,7 @@
             '<span class="nr-pub">' + esc(r.publisher_name || '发布者') + ' · ' + timeAgo(r.created_at) + '</span>' +
           '</div>' +
           '<div class="nr-item-foot">' +
-            '<a class="nr-detail" href="' + reqUrl(r.id) + '" target="_blank" rel="noopener noreferrer">查看详情</a>' +
+            '<button class="nr-detail" type="button" data-req="' + esc(r.id) + '">查看详情</button>' +
             '<button class="nr-grab" data-req="' + esc(r.id) + '">抢单</button>' +
           '</div>' +
           '</div>';
@@ -2737,16 +2805,27 @@
     };
     state._nrGrab = doGrab;                                 // 供一次性委托事件调用最新闭包
 
-    // 卡片点击：抢单按钮单独处理；点卡片其它区域打开详情深链（仅绑定一次，避免重复监听）
+    // 卡片点击：抢单按钮单独处理；点卡片其它区域 / 查看详情 在工作台内展开详情（仅绑定一次，避免重复监听）
     if (!body._nrBound) {
       body.addEventListener('click', (e) => {
         const grabBtn = e.target.closest('.nr-grab');
         if (grabBtn) { e.preventDefault(); e.stopPropagation(); if (state._nrGrab) state._nrGrab(grabBtn.dataset.req); return; }
-        if (e.target.closest('a')) return;                 // 详情链接走默认新窗口打开
+        const detailBtn = e.target.closest('.nr-detail');
+        if (detailBtn) { e.preventDefault(); e.stopPropagation(); openNrDetail(detailBtn.dataset.req); return; }
         const item = e.target.closest('.nr-item');
-        if (item) { const link = item.querySelector('.nr-detail'); if (link) window.open(link.href, '_blank', 'noopener'); }
+        if (item) { const link = item.querySelector('.nr-detail'); if (link) openNrDetail(link.dataset.req); }
       });
       body._nrBound = true;
+    }
+
+    // 在工作台弹窗内部展开需求详情（不跳转到抢单平台）
+    function openNrDetail(reqId) {
+      if (!reqId || !detailView) return;
+      const r = (state._nrList || []).find(x => x.id === reqId);
+      if (!r) { toast('需求数据缺失，请刷新列表'); return; }
+      detailBody.innerHTML = renderNrDetail(r, reqUrl(reqId), baseUrl);
+      body.style.display = 'none';
+      detailView.style.display = 'flex';
     }
 
     const loadList = async () => {
@@ -2760,7 +2839,11 @@
         renderEmpty('⚠️', '加载失败', '请稍后重试，或点击下方直接前往抢单平台');
       }
     };
-    sortSel.addEventListener('change', () => { renderBody(state._nrList, sortSel.value); });
+    sortSel.addEventListener('change', () => { state._nrSortLock = Date.now(); renderBody(state._nrList, sortSel.value); });
+    // 移动端原生 select 选完后会派发坐标落在面板外的合成 click（系统浮层不在 DOM 内），
+    // 这里锁住一段时间，避免命中「点面板外即关闭」逻辑把窗口误关
+    sortSel.addEventListener('mousedown', () => { state._nrSortLock = Date.now(); });
+    sortSel.addEventListener('click', (e) => { e.stopPropagation(); state._nrSortLock = Date.now(); });
     const refreshBtn = panel.querySelector('.nr-refresh');
     if (refreshBtn) refreshBtn.addEventListener('click', (e) => { e.stopPropagation(); loadList(); });
     await loadList();
@@ -2842,6 +2925,8 @@
       if (!panel || panel.style.display === 'none') return;
       if (btn && btn.contains(e.target)) return;
       if (panel.contains(e.target)) return;
+      // 移动端原生 select 选完后派发的面板外合成 click 落在锁窗口内时忽略，避免误关
+      if (state._nrSortLock && Date.now() - state._nrSortLock < 1500) return;
       panel.style.display = 'none';
     });
     // 【v540】按 Esc 关闭新需求面板
