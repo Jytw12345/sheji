@@ -1135,7 +1135,7 @@ window.DB = (function () {
 
   return {
     init, subscribe, getLastSync, getMode, markSynced,
-    subscribeDrNewReq, listDrRecentRequirements,
+    subscribeDrNewReq, listDrRecentRequirements, grabDrRequirement, createDrOrder,
     authUid, drDesignerRequirements, drHandleCancel, drListMessages, drSendMessage, drUploadAttachment,
     subscribeDrRequirementUpdates, subscribeDrMessages,
     reload(opts) { return (opts && opts.live) ? loadLive() : loadAll(); },
