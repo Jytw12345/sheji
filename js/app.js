@@ -10,6 +10,14 @@
     editingOrderId: null,
     editingOrder: null,
     currentUser: null,
+    _drAuthUid: null,            // 当前设计师的 Supabase auth.uid()（与 xinxifabu locked_by 一致）
+    _drReqByOrder: {},          // linked_order_id -> 需求行（用于订单卡片找对应需求）
+    _drReqById: {},             // 需求 id -> 需求行
+    _drUnread: {},              // 需求 id -> 未读消息数
+    _drChatReq: null,           // 当前打开的聊天需求 id
+    _drMsgSub: null,            // 当前聊天会话的 realtime 订阅
+    _drReqSub: null,            // 需求状态变化的 realtime 订阅
+    _drMsgSubs: {},             // 各需求消息订阅（用于未读角标）
     _subscribed: false,
     _uiBound: false,            // 【v535】UI 事件绑定一次性守卫：bindTabs/bindGlobal 移到 init() 开头后，
                                 //   showBootRetry 重跑 init() 会跳过重复绑定（重复会双触发 switchTab 等）
@@ -1208,6 +1216,8 @@
     subscribeNewReqRealtime();
     const nrBtn = $('#btnNewReq'); if (nrBtn) nrBtn.style.display = '';
     renderNewReqBadge();
+    // 【接入抢单平台】登录后拉取「我锁定的需求」并展示取消审批 / 沟通入口
+    loadDrRequirements();
     // 若记住的页无权限，落到仪表盘（仪表盘默认全开）
     if (!state.tab || !can(tabPermKey(state.tab))) state.tab = 'dashboard';
     // ═══════════════════════════════════════════════════
@@ -3136,6 +3146,7 @@
     const pageItems = orders.slice(start, start + pageSize);
     const dsMap = Object.fromEntries((state._designers || []).map(d => [d.id, d.name]));
     const rows = pageItems.map(o => {
+      const dr = drForOrder(o);
       const cat = window.Cfg.orderCategory(Number(o.amount) || 0, state._settings);
       const collabNames = (Array.isArray(o.collab_designer_ids) ? o.collab_designer_ids : [])
         .map(id => dsMap[id]).filter(Boolean);
@@ -3146,7 +3157,8 @@
         (taNames.length ? ' <span class="collab-tag ta-tag" title="临时协助：' + taNames.map(esc).join('/') + '">🤝' + taNames.map(n => esc(n.slice(0, 1))).join('/') + '</span>' : '');
       const reworkCell = o.revision_count
         ? ' <span class="collab-tag" title="改稿 ' + o.revision_count + ' 次">✏️' + o.revision_count + '</span>' : '';
-      return '<tr data-id="' + o.id + '">' +
+      const rowCls = (dr && dr.status === 'cancel_request') ? ' class="dr-cancel-row"' : '';
+      return '<tr data-id="' + o.id + '"' + rowCls + '">' +
         '<td title="' + esc(o.order_no || '') + '">' + esc(o.order_no || '') + '</td>' +
         '<td title="' + esc(o.title || '') + '">' + esc(o.title) + (o.notes ? ' <span title="' + esc(o.notes) + '">📝</span>' : '') + '</td>' +
         '<td title="' + esc(o.customer_name || '') + '">' + esc(o.customer_name || '') + '</td>' +
@@ -3158,7 +3170,8 @@
         '<td>' + fmtDeadline(o.deadline) + '</td>' +
         '<td class="center">' + riskBadge(o) + '</td>' +
         '<td class="center"><button class="btn sm secondary" data-act="open" data-id="' + o.id + '">流程/详情</button> ' +
-        '<button class="btn sm danger" data-act="del" data-id="' + o.id + '" data-perm="orders_delete">删除</button></td>' +
+        '<button class="btn sm danger" data-act="del" data-id="' + o.id + '" data-perm="orders_delete">删除</button>' +
+        drExtraForOrder(o) + '</td>' +
         '</tr>';
     }).join('');
     const sk = state.orderSort.key, sd = state.orderSort.dir;
@@ -3179,7 +3192,15 @@
     if (!table._actBound) {
       table.addEventListener('click', e => {
         const b = e.target.closest('[data-act]');
-        if (b) { e.stopPropagation(); if (b.dataset.act === 'open') openOrder(b.dataset.id); if (b.dataset.act === 'del') delOrder(b.dataset.id); return; }
+        if (b) {
+          e.stopPropagation();
+          if (b.dataset.act === 'drchat') { openDrChat(b.dataset.req); return; }
+          if (b.dataset.act === 'drcancel-approve') { handleCancel(b.dataset.req, 'approve'); return; }
+          if (b.dataset.act === 'drcancel-reject') { handleCancel(b.dataset.req, 'reject'); return; }
+          if (b.dataset.act === 'open') openOrder(b.dataset.id);
+          if (b.dataset.act === 'del') delOrder(b.dataset.id);
+          return;
+        }
         const th = e.target.closest('[data-sort]'); if (th) { toggleOrderSort(th.dataset.sort); return; }
         const row = e.target.closest('tr[data-id]'); if (row) openOrder(row.dataset.id);
       });
@@ -5313,6 +5334,204 @@
     $$('#workbenchCards [data-openfolder]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openInExplorer(b.dataset.openfolder); }));
     $$('#workbenchCards [data-fpcopy]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); copyText(b.dataset.fpcopy); toast('已复制路径'); }));
     $$('#workbenchCards [data-ta-done-order]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); markTempAssistDone(b.dataset.taDoneOrder, b.dataset.taDoneDid); }));
+    // 【接入抢单平台】沟通 / 取消审批按钮（data-act），stopPropagation 避免误触发打开订单
+    $$('#workbenchCards [data-act]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); routeDrAct(b.dataset.act, b.dataset.req); }));
+  }
+
+  // ============================================================
+  // 【工作台接入抢单平台】取消审批 + 沟通聊天
+  // 设计师用同一邮箱登录即可读写 dr_requirements / dr_messages（同库、同 auth.uid）。
+  // ============================================================
+  function drForOrder(o) { return (o && state._drReqByOrder[o.id]) || null; }
+
+  // 订单表格操作列的「沟通 / 取消审批」按钮
+  function drExtraForOrder(o) {
+    const dr = drForOrder(o); if (!dr) return '';
+    let h = ' <button class="btn sm" data-act="drchat" data-req="' + dr.id + '" title="与发布者沟通">💬</button>';
+    if (dr.status === 'cancel_request') {
+      h += ' <button class="btn sm ok" data-act="drcancel-approve" data-req="' + dr.id + '">同意取消</button>' +
+           ' <button class="btn sm warn" data-act="drcancel-reject" data-req="' + dr.id + '">拒绝取消</button>';
+    }
+    return h;
+  }
+  // 工作台卡片的「沟通」按钮（含未读角标）
+  function drChatBtnHtml(o) {
+    const dr = drForOrder(o); if (!dr) return '';
+    const unread = state._drUnread[dr.id] || 0;
+    const badge = unread ? '<span class="dr-unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '';
+    return '<button class="btn sm" data-act="drchat" data-req="' + dr.id + '" title="与发布者沟通">💬 沟通' + badge + '</button>';
+  }
+  // 工作台卡片的「发布者申请取消」横幅
+  function drCancelBannerHtml(o) {
+    const dr = drForOrder(o);
+    if (!dr || dr.status !== 'cancel_request') return '';
+    return '<div class="wb-cancel-banner">🚫 发布者申请取消该订单' +
+      '<button class="btn sm ok" data-act="drcancel-approve" data-req="' + dr.id + '">同意取消</button>' +
+      '<button class="btn sm warn" data-act="drcancel-reject" data-req="' + dr.id + '">拒绝取消</button></div>';
+  }
+  // 团队看板卡片：沟通按钮；仅当「我是锁定设计师」时显示取消审批
+  function drTeamHtml(o) {
+    const dr = drForOrder(o); if (!dr) return '';
+    let h = '<div class="team-dr">💬 <button class="btn sm" data-act="drchat" data-req="' + dr.id + '">沟通</button>';
+    if (dr.status === 'cancel_request' && dr.locked_by === state._drAuthUid) {
+      h += ' <button class="btn sm ok" data-act="drcancel-approve" data-req="' + dr.id + '">同意取消</button>' +
+           ' <button class="btn sm warn" data-act="drcancel-reject" data-req="' + dr.id + '">拒绝</button>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function routeDrAct(act, reqId) {
+    if (act === 'drchat') openDrChat(reqId);
+    else if (act === 'drcancel-approve') handleCancel(reqId, 'approve');
+    else if (act === 'drcancel-reject') handleCancel(reqId, 'reject');
+  }
+
+  // 登录后拉取「我锁定的需求」，建映射并订阅实时变更
+  async function loadDrRequirements() {
+    try {
+      const uid = await DB.authUid();
+      if (!uid) return;
+      state._drAuthUid = uid;
+      const list = await DB.drDesignerRequirements(uid);
+      const byOrder = {}, byId = {};
+      (list || []).forEach(r => { byId[r.id] = r; if (r.linked_order_id) byOrder[r.linked_order_id] = r; });
+      state._drReqById = byId;
+      state._drReqByOrder = byOrder;
+      if (!state._drReqSub) state._drReqSub = DB.subscribeDrRequirementUpdates(uid, onDrRequirementUpdate);
+      Object.keys(byId).forEach(rid => {
+        if (!state._drMsgSubs[rid]) state._drMsgSubs[rid] = DB.subscribeDrMessages(rid, onDrMessageRealtime);
+      });
+      if (state.tab === 'orders') renderOrders();
+      else if (state.tab === 'designers' || state.tab === 'workbench') renderWorkbench();
+    } catch (e) { console.warn('[dr] 加载锁定需求失败', e); }
+  }
+
+  // 需求状态变化（如发布者发起取消申请）→ 更新映射并提示
+  function onDrRequirementUpdate(row) {
+    if (!row || !row.id) return;
+    const prev = state._drReqById[row.id] || {};
+    const merged = Object.assign({}, prev, row);
+    state._drReqById[row.id] = merged;
+    if (row.linked_order_id) state._drReqByOrder[row.linked_order_id] = merged;
+    if (row.status === 'cancel_request') {
+      toast('🚫 发布者申请取消订单：' + (row.title || '') + '（请在工作台处理）');
+    }
+    if (state.tab === 'orders') renderOrders();
+    else if (state.tab === 'designers' || state.tab === 'workbench') renderWorkbench();
+  }
+
+  // 收到他人消息（聊天未打开该会话时）→ 未读角标 + 提示
+  function onDrMessageRealtime(m) {
+    if (!m) return;
+    if (state._drChatReq === m.requirement_id) return; // 正在聊的不计未读
+    if (m.sender_id && m.sender_id !== state._drAuthUid) {
+      state._drUnread[m.requirement_id] = (state._drUnread[m.requirement_id] || 0) + 1;
+      const req = state._drReqById[m.requirement_id];
+      toast('💬 新消息：' + (req ? (req.title || '') : ''));
+      if (state.tab === 'orders') renderOrders();
+      else if (state.tab === 'designers' || state.tab === 'workbench') renderWorkbench();
+    }
+  }
+
+  // 同意 / 拒绝取消申请
+  async function handleCancel(reqId, action) {
+    const label = action === 'approve' ? '已同意取消' : '已拒绝取消';
+    const res = await DB.drHandleCancel(reqId, state._drAuthUid, action);
+    if (res && res.ok) {
+      toast(label);
+      const req = state._drReqById[reqId];
+      if (req) req.status = action === 'approve' ? 'cancelled' : (req.pre_cancel_status || 'in_progress');
+      if (state.tab === 'orders') renderOrders();
+      else renderWorkbench();
+    } else {
+      toast('操作失败：' + ((res && res.msg) || ''));
+    }
+  }
+
+  // ---------------- 聊天窗口 ----------------
+  function ensureDrChatPanel() {
+    if ($('#drChatPanel')) return;
+    const el = document.createElement('div');
+    el.id = 'drChatPanel';
+    el.className = 'dr-chat-mask';
+    el.innerHTML = '<div class="dr-chat">' +
+      '<div class="dr-chat-head"><div><b id="drChatTitle"></b><div id="drChatSub" class="dr-chat-sub"></div></div>' +
+      '<button id="drChatClose" class="dr-chat-x" title="关闭">✕</button></div>' +
+      '<div id="drChatMsgs" class="dr-chat-msgs"></div>' +
+      '<div class="dr-chat-input"><input type="file" id="drChatFile" accept="image/*" style="display:none" />' +
+      '<button id="drChatAttach" type="button" class="btn sm">🖼 图片</button>' +
+      '<input id="drChatText" type="text" placeholder="输入消息，回车发送…" />' +
+      '<button id="drChatSend" type="button" class="btn sm primary">发送</button></div></div>';
+    document.body.appendChild(el);
+    $('#drChatClose').addEventListener('click', closeDrChat);
+    el.addEventListener('click', (e) => { if (e.target === el) closeDrChat(); });
+    $('#drChatSend').addEventListener('click', sendDrMessage);
+    $('#drChatText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) sendDrMessage(); });
+    $('#drChatAttach').addEventListener('click', () => $('#drChatFile').click());
+    $('#drChatFile').addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      const send = $('#drChatSend'); send.textContent = '上传中…'; send.disabled = true;
+      const up = await DB.drUploadAttachment(state._drChatReq, f);
+      send.textContent = '发送'; send.disabled = false; $('#drChatFile').value = '';
+      if (!up.ok) { toast('图片上传失败：' + up.msg); return; }
+      await doSendDrMessage('', { msg_type: 'image', attachments: [{ url: up.url, name: up.name }] });
+    });
+  }
+  function scrollDrChatBottom() { const b = $('#drChatMsgs'); if (b) b.scrollTop = b.scrollHeight; }
+  function appendDrMessage(m, fromRealtime) {
+    const box = $('#drChatMsgs'); if (!box || !m) return;
+    if (box.querySelector('[data-mid="' + m.id + '"]')) return; // 去重（自己发的也会经 realtime 回来）
+    const mine = m.sender_id === state._drAuthUid;
+    let body;
+    if (m.msg_type === 'image' && m.attachments && m.attachments.length) {
+      body = m.attachments.map(a => '<img class="dr-msg-img" src="' + esc(a.url) + '" alt="' + esc(a.name || '') + '" />').join('');
+      if (m.body) body += '<div class="dr-msg-cap">' + esc(m.body) + '</div>';
+    } else {
+      body = '<div class="dr-msg-bubble">' + esc(m.body || '') + '</div>';
+    }
+    const div = document.createElement('div');
+    div.className = 'dr-msg ' + (mine ? 'mine' : 'other');
+    div.setAttribute('data-mid', m.id);
+    div.innerHTML = '<div class="dr-msg-meta">' + esc(m.sender_name || '') + ' · ' + fmtTime(m.created_at) + '</div>' + body;
+    box.appendChild(div);
+    scrollDrChatBottom();
+  }
+  async function openDrChat(reqId) {
+    state._drChatReq = reqId;
+    state._drUnread[reqId] = 0;
+    ensureDrChatPanel();
+    const panel = $('#drChatPanel'); panel.style.display = 'flex';
+    const req = state._drReqById[reqId] || {};
+    $('#drChatTitle').textContent = '沟通 · ' + (req.title || '需求');
+    $('#drChatSub').textContent = req.publisher_name ? ('发布者：' + req.publisher_name) : '';
+    const box = $('#drChatMsgs'); box.innerHTML = '<div class="dr-chat-loading">加载中…</div>';
+    if (state._drMsgSub) { try { state._drMsgSub.unsubscribe(); } catch (e) {} }
+    state._drMsgSub = DB.subscribeDrMessages(reqId, (m) => { if (m.requirement_id === reqId) appendDrMessage(m, true); });
+    const list = await DB.drListMessages(reqId);
+    box.innerHTML = '';
+    (list || []).forEach(m => appendDrMessage(m, false));
+    scrollDrChatBottom();
+    $('#drChatText').focus();
+    if (state.tab === 'orders') renderOrders(); else renderWorkbench(); // 清掉未读角标
+  }
+  function closeDrChat() {
+    const panel = $('#drChatPanel'); if (panel) panel.style.display = 'none';
+    if (state._drMsgSub) { try { state._drMsgSub.unsubscribe(); } catch (e) {} state._drMsgSub = null; }
+    state._drChatReq = null;
+    if (state.tab === 'orders') renderOrders(); else renderWorkbench();
+  }
+  async function sendDrMessage() {
+    const text = ($('#drChatText').value || '').trim();
+    if (!text) return;
+    $('#drChatText').value = '';
+    await doSendDrMessage(text, { msg_type: 'text', attachments: [] });
+  }
+  async function doSendDrMessage(body, opts) {
+    const reqId = state._drChatReq; if (!reqId) return;
+    const res = await DB.drSendMessage(reqId, body, state._drAuthUid, (state.currentUser && state.currentUser.name) || '设计师', opts);
+    if (res && res.ok && res.data) appendDrMessage(res.data, false);
+    else if (!res || !res.ok) toast('发送失败：' + ((res && res.msg) || ''));
   }
 
   // 「我的工作台 → 团队看板」：所有设计师各占一列（管理员/店长看全团队，普通设计师仅看自己那一列），
@@ -5581,15 +5800,17 @@
           ${o.file_paths && o.file_paths.length ? '<div class="wb-files">📂 素材：' + o.file_paths.map(p => '<a class="wb-fp" data-openfolder="' + esc(p) + '" title="' + esc(p) + '">' + esc(p.split('/').pop() || p) + '</a>').join(' ') + ' <button class="wb-open-folder" data-fpcopy="' + esc(o.file_paths.join('\n')) + '">复制路径</button></div>' : ''}
           ${(o.design_paths && o.design_paths.length) ? '<div class="wb-design"><span class="wb-design-lbl">🎨 设计稿：</span>' + o.design_paths.map(p => '<a class="wb-fp" data-openfolder="' + esc(p) + '" title="' + esc(p) + '">' + esc(p.split('/').pop() || p) + '</a>').join(' ') + ' <button class="wb-open-folder" data-fpcopy="' + esc(o.design_paths.join('\n')) + '">复制路径</button></div>' : ''}
         </div>
+        ${drCancelBannerHtml(o)}
         <div class="wb-foot">
           <span class="wb-deadline">截稿：${fmtDeadline(o.deadline) || '未设置'}</span>
-          <div class="wb-actions">${cardFlowButtons(o)}<button class="btn sm secondary" data-open="${o.id}">详情</button></div>
+          <div class="wb-actions">${cardFlowButtons(o)}<button class="btn sm secondary" data-open="${o.id}">详情</button>${drChatBtnHtml(o)}</div>
         </div>
       </div>`;
   }
 
   // 团队看板专用简化卡片：只保留最关键信息，整卡可点打开详情
   function teamBoardCard(o, designer) {
+    const dr = drForOrder(o);
     const dsMap = Object.fromEntries((state._designers || []).map(d => [d.id, d.name]));
     const isMeMain = o.assigned_designer_id === designer.id;
     const isMeCollab = Array.isArray(o.collab_designer_ids) && o.collab_designer_ids.includes(designer.id);
@@ -5624,7 +5845,7 @@
         <div class="team-progress"><div class="team-progress-bar" style="width:${progress}%;background:${color}"></div><span>${progress}%</span></div>
         <div class="team-client">${clientPart}${esc(o.task_type)}</div>
         ${dl.badge ? '<div class="team-dl">' + dl.badge + '<div class="team-dl-detail">截稿 ' + fmtDeadline(o.deadline) + '</div></div>' : ''}
-        ${taLine}
+        ${taLine}${drTeamHtml(o)}
       </div>`;
   }
 

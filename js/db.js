@@ -1010,9 +1010,113 @@ window.DB = (function () {
     } catch (e) { console.warn('[dr] 查询最近需求异常', e); return []; }
   }
 
+  // ============================================================
+  // 【工作台接入抢单平台】设计师侧数据 / 实时接口
+  // 同库（Supabase 东京），设计师用同一邮箱登录即可读写 dr_requirements / dr_messages。
+  // ============================================================
+
+  // 当前登录用户的 Supabase auth.uid()（与 xinxifabu 的 locked_by 一致）
+  async function authUid() {
+    try { const { data } = await sb.auth.getUser(); return data && data.user ? data.user.id : null; }
+    catch (e) { return null; }
+  }
+
+  // 查询当前设计师锁定的全部抢单平台需求（含取消申请状态与关联订单）
+  async function drDesignerRequirements(uid) {
+    if (!sb || !uid) return [];
+    try {
+      const { data, error } = await sb.rpc('dr_designer_requirements', { p_uid: uid });
+      if (error) { console.warn('[dr] 查询锁定需求失败', error); return []; }
+      return Array.isArray(data) ? data : [];
+    } catch (e) { console.warn('[dr] 查询锁定需求异常', e); return []; }
+  }
+
+  // 同意/拒绝发布者的取消申请：action = 'approve' | 'reject'
+  async function drHandleCancel(reqId, uid, action) {
+    if (!sb) return { ok: false, msg: '未连接' };
+    try {
+      const { data, error } = await sb.rpc('dr_handle_cancel', { p_req: reqId, p_uid: uid, p_action: action });
+      if (error) throw error;
+      return data || { ok: true };
+    } catch (e) { return { ok: false, msg: e.message || '操作失败' }; }
+  }
+
+  // 读取某需求的聊天消息（按时间正序）
+  async function drListMessages(reqId) {
+    if (!sb) return [];
+    try {
+      const { data, error } = await sb
+        .from('dr_messages')
+        .select('id,requirement_id,sender_id,sender_name,body,msg_type,attachments,created_at')
+        .eq('requirement_id', reqId)
+        .order('created_at', { ascending: true })
+        .limit(500);
+      if (error) { console.warn('[dr] 读消息失败', error); return []; }
+      return data || [];
+    } catch (e) { console.warn('[dr] 读消息异常', e); return []; }
+  }
+
+  // 发送聊天消息（text 或 image）
+  async function drSendMessage(reqId, body, senderId, senderName, opts) {
+    opts = opts || {};
+    if (!sb) return { ok: false, msg: '未连接' };
+    try {
+      const row = {
+        requirement_id: reqId,
+        sender_id: senderId,
+        sender_name: senderName || '',
+        body: body || '',
+        msg_type: opts.msg_type || 'text',
+        attachments: opts.attachments || []
+      };
+      const { data, error } = await sb.from('dr_messages').insert(row).select().single();
+      if (error) throw error;
+      return { ok: true, data };
+    } catch (e) { return { ok: false, msg: e.message || '发送失败' }; }
+  }
+
+  // 上传聊天图片附件到 Storage，返回 { url, name }
+  async function drUploadAttachment(reqId, file) {
+    if (!sb) return { ok: false, msg: '未连接' };
+    try {
+      const ext = (file.name || 'img').split('.').pop();
+      const path = 'req-' + reqId + '/' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())) + '.' + ext;
+      const { error } = await sb.storage.from('dr-attachments').upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data } = sb.storage.from('dr-attachments').getPublicUrl(path);
+      return { ok: true, url: data.publicUrl, name: file.name || path };
+    } catch (e) { return { ok: false, msg: e.message || '上传失败' }; }
+  }
+
+  // 订阅「我的锁定需求」状态变化（取消申请到达等）
+  function subscribeDrRequirementUpdates(uid, cb) {
+    if (!sb || !uid) return null;
+    try {
+      return sb.channel('dr-req-upd-' + uid)
+        .on('postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'dr_requirements', filter: 'locked_by=eq.' + uid },
+          (payload) => { try { cb && cb(payload.new); } catch (e) { console.warn('[dr] 需求更新回调异常', e); } })
+        .subscribe();
+    } catch (e) { console.warn('[dr] 需求更新订阅失败', e); return null; }
+  }
+
+  // 订阅某需求的新聊天消息（INSERT）
+  function subscribeDrMessages(reqId, cb) {
+    if (!sb || !reqId) return null;
+    try {
+      return sb.channel('dr-msg-' + reqId)
+        .on('postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'dr_messages', filter: 'requirement_id=eq.' + reqId },
+          (payload) => { try { cb && cb(payload.new); } catch (e) { console.warn('[dr] 消息回调异常', e); } })
+        .subscribe();
+    } catch (e) { console.warn('[dr] 消息订阅失败', e); return null; }
+  }
+
   return {
     init, subscribe, getLastSync, getMode, markSynced,
     subscribeDrNewReq, listDrRecentRequirements,
+    authUid, drDesignerRequirements, drHandleCancel, drListMessages, drSendMessage, drUploadAttachment,
+    subscribeDrRequirementUpdates, subscribeDrMessages,
     reload(opts) { return (opts && opts.live) ? loadLive() : loadAll(); },
     getSettings, saveSettings, reloadSettings, loadSettingsRobust, loadDesignersRobust, probeSupabaseSchema,
     primeCache, listDesigners, saveDesigner, deleteDesigner,
