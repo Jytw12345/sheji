@@ -355,7 +355,7 @@
     return state._riskMap;
   }
   function riskInfo(o) { return riskMap()[o.id] || { level: 'none', reason: '' }; }
-  function isFinishedStatus(s) { return s === '已定稿' || s === '已换人'; }
+  function isFinishedStatus(s) { return s === '已定稿' || s === '已换人' || s === '已取消'; }
   // 风险标签 HTML（红/黄/绿圆点 + 文案；无风险返回空）
   function riskBadge(o) {
     const r = riskInfo(o);
@@ -442,6 +442,80 @@
     t.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1400);
   }
+
+  /* ===== 自定义右键上下文菜单（2026-08-28 新增） ===== */
+  let _ctxEl = null;
+  function ensureCtxMenu() {
+    if (_ctxEl) return _ctxEl;
+    _ctxEl = document.createElement('div');
+    _ctxEl.id = 'ctxMenu';
+    document.body.appendChild(_ctxEl);
+    // 点外部 / 滚动 / Esc 关闭；用捕获阶段，确保早于各表的 contextmenu 委托
+    document.addEventListener('click', hideCtxMenu, true);
+    document.addEventListener('contextmenu', e => { if (!e.target.closest('#ctxMenu')) hideCtxMenu(); }, true);
+    window.addEventListener('scroll', hideCtxMenu, true);
+    window.addEventListener('resize', hideCtxMenu);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') hideCtxMenu(); });
+    return _ctxEl;
+  }
+  function hideCtxMenu() { if (_ctxEl) _ctxEl.classList.remove('show'); }
+  function showCtxMenu(x, y, items) {
+    const m = ensureCtxMenu();
+    m.innerHTML = items.map((it, i) =>
+      it.sep ? '<div class="sep"></div>'
+             : '<div class="mi' + (it.danger ? ' danger' : '') + '" data-i="' + i + '">' + esc(it.label) + '</div>'
+    ).join('');
+    m.querySelectorAll('.mi').forEach(el => {
+      el.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const it = items[+el.dataset.i];
+        hideCtxMenu();
+        if (it && it.onClick) it.onClick();
+      });
+    });
+    m.classList.add('show');
+    const r = m.getBoundingClientRect();
+    let nx = x, ny = y;
+    if (x + r.width > window.innerWidth) nx = window.innerWidth - r.width - 6;
+    if (y + r.height > window.innerHeight) ny = window.innerHeight - r.height - 6;
+    m.style.left = Math.max(6, nx) + 'px';
+    m.style.top = Math.max(6, ny) + 'px';
+  }
+
+  // 打印工单：生成打印区内容后调用 window.print()
+  async function printWorkOrder(id) {
+    const o = (state._orders || []).find(x => x.id === id);
+    if (!o) { toast('找不到该订单'); return; }
+    const st = (window.Cfg.STATUS && window.Cfg.STATUS[o.status]) || {};
+    const dName = id2 => ((state._designers || []).find(d => d.id === id2) || {}).name || '未指派';
+    const f = v => (v == null || v === '') ? '—' : esc(String(v));
+    const rows = [
+      ['订单号', o.order_no],
+      ['客户', o.customer_name],
+      ['项目', o.title],
+      ['类型', o.task_type],
+      ['金额', (o.amount != null ? '¥' + Number(o.amount).toFixed(2) : '')],
+      ['状态', st.label || o.status],
+      ['主设计师', dName(o.assigned_designer_id)],
+      ['截稿时间', o.deadline ? fmtTime(o.deadline) : ''],
+      ['接单时间', o.intake_at ? fmtTime(o.intake_at) : ''],
+      ['备注', o.notes]
+    ];
+    const html =
+      '<div class="wo">' +
+        '<h2>设计工单</h2>' +
+        '<table>' +
+          rows.map(r => '<tr><th>' + esc(r[0]) + '</th><td>' + f(r[1]) + '</td></tr>').join('') +
+        '</table>' +
+        '<p class="ft">打印时间：' + esc(fmtTime(new Date().toISOString())) +
+          ' ｜ 单号：' + esc(o.order_no || '') + '</p>' +
+      '</div>';
+    let area = document.getElementById('printArea');
+    if (!area) { area = document.createElement('div'); area.id = 'printArea'; document.body.appendChild(area); }
+    area.innerHTML = html;
+    setTimeout(() => { try { window.print(); } catch (e) { console.warn('[print] 失败', e); } }, 60);
+  }
+
   // 标量时间 → 日志数组：标量代表"当前"时间。已在日志中则保留；不在（通常是编辑框改过时间
   // 或旧数据迁移）则「替换末条」而非追加——否则会渲染出幽灵的"第N次提案 / 第N稿"。
   function syncScalarToLog(o, logKey, scalarKey) {
@@ -3439,6 +3513,32 @@
       });
       table._actBound = true;
     }
+    // 自定义右键菜单（订单表）
+    if (!table._ctxBound) {
+      table.addEventListener('contextmenu', e => {
+        if (e.target.closest('input, textarea, [contenteditable="true"]')) return; // 输入框保留系统菜单
+        const row = e.target.closest('tr[data-id]');
+        e.preventDefault();
+        if (row) {
+          const o = (state._orders || []).find(x => x.id === row.dataset.id);
+          if (!o) return;
+          const items = [
+            { label: '查看详情', onClick: () => openOrder(o.id) },
+            (can('flow_advance') ? { label: '改状态', onClick: () => openOrder(o.id) } : null),
+            { label: '复制单号', onClick: () => { copyText(o.order_no || ''); toast('已复制单号：' + (o.order_no || '')); } },
+            { label: '打印工单', onClick: () => printWorkOrder(o.id) }
+          ].filter(Boolean);
+          showCtxMenu(e.clientX, e.clientY, items);
+        } else {
+          const items = [
+            (can('orders_create') ? { label: '新建订单', onClick: () => newOrder() } : null),
+            { label: '刷新订单', onClick: () => doRefresh() }
+          ].filter(Boolean);
+          showCtxMenu(e.clientX, e.clientY, items);
+        }
+      });
+      table._ctxBound = true;
+    }
     // 红色风险筛选提示条
     const rbar = $('#ordersRiskBar');
     if (rbar) {
@@ -5475,14 +5575,15 @@
         return true;
       });
     }
-    // 自动隐藏已定稿（定稿满 24 小时）：聚焦进行中订单。
-    // 仅当未显式筛选“已定稿”时生效；选“已定稿”即视为主动调取归档单。
+    // 自动隐藏终态订单（定稿/换人/取消满 24 小时）：聚焦进行中订单。
+    // 仅当未显式筛选终态时生效；选中终态即视为主动调取归档单。
     let hiddenArchived = 0;
-    if (state.autoHideFinalized && fStatus !== '已定稿' && fStatus !== '已换人') {
+    if (state.autoHideFinalized && fStatus !== '已定稿' && fStatus !== '已换人' && fStatus !== '已取消') {
       const before = cardOrders.length;
       cardOrders = cardOrders.filter(o => {
         if (o.status === '已定稿') return !(o.finalized_at && (now.getTime() - new Date(o.finalized_at).getTime()) > ARCHIVE_AFTER_HOURS * 3600000);
         if (o.status === '已换人') return !(o.switched_at && (now.getTime() - new Date(o.switched_at).getTime()) > ARCHIVE_AFTER_HOURS * 3600000);
+        if (o.status === '已取消') return !(o.cancel_at && (now.getTime() - new Date(o.cancel_at).getTime()) > ARCHIVE_AFTER_HOURS * 3600000);
         return true;
       });
       hiddenArchived = before - cardOrders.length;
@@ -5561,7 +5662,7 @@
       return;
     }
     const archiveHint = hiddenArchived
-      ? '<div class="wb-archive-hint"><span class="wb-hint-ico">📂</span>已隐藏 ' + hiddenArchived + ' 个已完成订单（定稿满1天）· <a href="javascript:;" id="wbShowArchived">点击显示全部</a></div>'
+      ? '<div class="wb-archive-hint"><span class="wb-hint-ico">📂</span>已隐藏 ' + hiddenArchived + ' 个已完成/已取消订单（满1天）· <a href="javascript:;" id="wbShowArchived">点击显示全部</a></div>'
       : '';
     if (!cardOrders.length) {
       $('#workbenchCards').innerHTML = archiveHint || '<div class="empty">没有符合筛选条件的订单</div>';
@@ -5599,6 +5700,93 @@
     $$('#workbenchCards [data-ta-done-order]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); markTempAssistDone(b.dataset.taDoneOrder, b.dataset.taDoneDid); }));
     // 【接入抢单平台】沟通 / 取消审批按钮（data-act），stopPropagation 避免误触发打开订单
     $$('#workbenchCards [data-act]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); routeDrAct(b.dataset.act, b.dataset.req); }));
+    // 工作台卡片自定义右键菜单（一次性绑定到容器；innerHTML 重建只换子节点，容器不销毁）
+    const cardsEl = $('#workbenchCards');
+    if (cardsEl && !cardsEl._wbCtxBound) {
+      cardsEl.addEventListener('contextmenu', e => {
+        if (e.target.closest('input, textarea, [contenteditable="true"]')) return; // 输入框保留系统菜单
+        const card = e.target.closest('.wb-card');
+        if (!card) return;
+        const id = card.dataset.wbId;
+        const o = (state._orders || []).find(x => x.id === id);
+        if (!o) return;
+        e.preventDefault();
+        const items = [];
+        // ① 快捷推进流程：复用卡片流程按钮的可用动作（与卡片一致，免进弹窗）
+        wbCardActions(o).forEach(a => items.push({ label: '⏩ ' + a.label, onClick: () => wbAdvance(id, a.act) }));
+        // ② 打开文件夹 / 复制路径（素材 + 设计稿）
+        const fps = (o.file_paths || []).concat(o.design_paths || []);
+        if (fps.length) {
+          items.push({ sep: true });
+          fps.forEach(p => {
+            items.push({ label: '📂 打开：' + (p.split('/').pop() || p), onClick: () => openInExplorer(p) });
+            items.push({ label: '📋 复制路径：' + (p.split('/').pop() || p), onClick: () => { copyText(p); toast('已复制路径'); } });
+          });
+        }
+        // ③ 标记协助完成（仅本人有进行中的临时协助）
+        const myTa = (o.temp_assist_log || []).filter(r => r.did === state.currentDesignerId && !r.done);
+        if (myTa.length) {
+          items.push({ sep: true });
+          items.push({ label: '🤝 标记协助完成', onClick: () => markTempAssistDone(o.id, state.currentDesignerId) });
+        }
+        // ④ 取消订单（有权限且非终态）：轻量版，逻辑与订单弹窗内取消一致
+        if (can('orders_cancel') && !['已定稿', '已换人', '已取消'].includes(o.status)) {
+          items.push({ sep: true });
+          items.push({ label: '🚫 取消订单', danger: true, onClick: () => wbCancelOrder(id) });
+        }
+        if (items.length) showCtxMenu(e.clientX, e.clientY, items);
+      });
+      cardsEl._wbCtxBound = true;
+    }
+  }
+
+  // 工作台卡片可用流程动作（供右键「快捷推进流程」复用卡片按钮逻辑）
+  function wbCardActions(o) {
+    const acts = [];
+    const add = (act, label) => acts.push({ act, label });
+    switch (o.status) {
+      case '派单': add('proposal', '提交提案'); break;
+      case '提案': add('proposal_pass', '提案通过'); add('proposal_fail', '不通过'); break;
+      case '提案不通过': add('proposal_again', '二次提案'); add('switch', '换人'); break;
+      case '设计中': add('draft', '提交初稿'); break;
+      case '初稿': add('feedback', '送审客户'); break;
+      case '客户反馈': add('finalize', '定稿'); add('revise', '需要修改'); break;
+      case '修改中': add('finalize', '客户定稿'); add('switch', '换人'); break;
+      // 接单：等待管理员派单，无快捷动作；已定稿/已换人/已取消：终态无动作
+    }
+    if (can('flow_revert') && canRevert(o.status)) acts.push({ act: 'revert', label: '回退一步' });
+    return acts;
+  }
+
+  // 工作台卡片右键「取消订单」：轻量版（不打开弹窗），与订单弹窗内取消逻辑一致
+  async function wbCancelOrder(id) {
+    const o = (state._orders || []).find(x => x.id === id);
+    if (!o) { toast('订单不存在'); return; }
+    if (!can('orders_cancel')) { toast('无取消订单权限（仅店长/管理员可操作）'); return; }
+    if (['已定稿', '已换人', '已取消'].includes(o.status)) { toast('该订单已为终态，无法取消'); return; }
+    let reason = null;
+    while (true) {
+      const r = await uiInput('客户取消 / 终止此订单', '请填写取消原因（至少 4 个字，需含文字说明，不可用数字替代；如：客户预算不足 / 需求变更 / 长期无反馈）', true);
+      if (r === null) return; // 用户取消输入
+      const err = validReason(r, '取消原因');
+      if (err) { toast(err); continue; }
+      reason = r; break;
+    }
+    const prevStatus = o.status;
+    o.pre_cancel_status = prevStatus;
+    o.status = '已取消';
+    o.cancel_reason = reason;
+    o.cancel_at = new Date().toISOString();
+    const lk = 'cancel:' + id;
+    if (!lockOp(lk)) return;
+    try {
+      await DB.saveOrder(o);
+      logOp('取消订单', '订单', o.id, o.order_no, reason);
+      await refreshAll();
+      renderWorkbench();
+      toast('订单已标记为「已取消」');
+    } catch (e) { console.error(e); toast('保存失败：' + e.message); }
+    finally { unlockOp(lk); }
   }
 
   // ============================================================
@@ -5949,7 +6137,7 @@
 
   // 计算截稿状态：返回 { badge, cardClass, footClass } 用于卡片标记与红色预警
   function deadlineInfo(o) {
-    const done = (o.status === '已定稿' || o.status === '已换人');
+    const done = (o.status === '已定稿' || o.status === '已换人' || o.status === '已取消');
     if (!o.deadline) return { badge: '', cardClass: '', footClass: '' };
     // 是否已提供初稿：有初稿时间戳，或状态已推进到初稿及之后
     const FLOW = window.Cfg.FLOW;
@@ -6014,7 +6202,7 @@
         '<circle class="wb-ring-fg" cx="22" cy="22" r="19" pathLength="100" style="stroke:' + ringColorVal + ';stroke-dasharray:' + progress + ' ' + (100 - progress) + '"></circle>' +
         '</svg><div class="wb-ring-txt">' + progress + '%</div></div>';
     const statusPill = softBadge((window.Cfg.STATUS[o.status] || {}).color || '#64748b', esc((window.Cfg.STATUS[o.status] || {}).label || o.status));
-    const done = (o.status === '已定稿' || o.status === '已换人');
+    const done = (o.status === '已定稿' || o.status === '已换人' || o.status === '已取消');
     const finishTime = done ? (o.finalized_at || o.switched_at) : null;
     const nextHint = done
       ? '<span title="完成时间">' + (finishTime ? fmtTime(finishTime).slice(0, 10) : '—') + ' 完成</span>'
@@ -6039,7 +6227,7 @@
         '</div>'
       : '';
     return `
-      <div class="wb-card ${dl.cardClass}">
+      <div class="wb-card ${dl.cardClass}" data-wb-id="${esc(o.id)}">
         <div class="wb-head-ring">
           ${ringSvg}
           <div class="wb-head-main">
@@ -6608,6 +6796,32 @@
         const row = e.target.closest('tr[data-cid]'); if (row) viewCustomer(row.dataset.cid);
       });
       table._actBound = true;
+    }
+    // 自定义右键菜单（客户表）
+    if (!table._ctxBound) {
+      table.addEventListener('contextmenu', e => {
+        if (e.target.closest('input, textarea, [contenteditable="true"]')) return; // 输入框保留系统菜单
+        const row = e.target.closest('tr[data-cid]');
+        e.preventDefault();
+        if (row) {
+          const c = (state._customers || []).find(x => x.id === row.dataset.cid);
+          if (!c) return;
+          const contact = [c.name, c.phone, c.company].filter(Boolean).join(' ｜ ');
+          const items = [
+            { label: '查看历史订单', onClick: () => viewCustomer(c.id) },
+            { label: '复制手机号', onClick: () => { copyText(c.phone || ''); toast('已复制手机号：' + (c.phone || '')); } },
+            { label: '复制联系方式', onClick: () => { copyText(contact); toast('已复制联系方式'); } }
+          ];
+          showCtxMenu(e.clientX, e.clientY, items);
+        } else {
+          const items = [
+            (can('customers_create') ? { label: '新建客户', onClick: () => newCustomer() } : null),
+            { label: '刷新客户', onClick: () => doRefresh() }
+          ].filter(Boolean);
+          showCtxMenu(e.clientX, e.clientY, items);
+        }
+      });
+      table._ctxBound = true;
     }
     renderCustomersPager(total, page, totalPages, rawCs.length);
     applyPermissions();

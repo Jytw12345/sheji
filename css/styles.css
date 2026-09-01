@@ -2979,3 +2979,40 @@ tr.dr-cancel-row:hover > td { background: #ffe4e6; }
   border-radius: 8px; font-size: 14px; outline: none;
 }
 .dr-chat-input #drChatText:focus { border-color: var(--primary); }
+
+/* ===== 自定义右键上下文菜单（2026-08-28） ===== */
+#ctxMenu {
+  position: fixed; z-index: 9999; min-width: 168px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow);
+  padding: 6px; display: none; font-size: 14px; color: var(--text);
+  user-select: none;
+}
+#ctxMenu.show { display: block; }
+#ctxMenu .mi {
+  padding: 8px 12px; border-radius: 7px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px; white-space: nowrap;
+}
+#ctxMenu .mi:hover { background: var(--bg); }
+#ctxMenu .mi.danger { color: var(--bad); }
+#ctxMenu .mi.danger:hover { background: #fef2f2; }
+#ctxMenu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
+
+/* ===== 打印工单（2026-08-28） ===== */
+#printArea { display: none; }
+#printArea .wo { padding: 24px 28px; color: #111; font-size: 14px; }
+#printArea .wo h2 { margin: 0 0 14px; font-size: 20px; text-align: center; }
+#printArea .wo table { width: 100%; border-collapse: collapse; }
+#printArea .wo th, #printArea .wo td {
+  border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; vertical-align: top;
+}
+#printArea .wo th { width: 96px; background: #f1f5f9; font-weight: 600; }
+#printArea .wo .ft { margin-top: 16px; color: #64748b; font-size: 12px; text-align: right; }
+@media print {
+  body * { visibility: hidden !important; }
+  #ctxMenu { display: none !important; }
+  #printArea, #printArea * { visibility: visible !important; }
+  #printArea {
+    display: block !important; position: absolute; left: 0; top: 0; width: 100%;
+  }
+}
