@@ -4054,9 +4054,9 @@
   function updateDeadlineWarn() {
     const h = $('#oDeadline'), warn = $('#oDeadlineWarn');
     if (!h || !warn) return;
-    // 终态订单（已定稿/已换人）不再显示截稿逾期预警，与列表侧 isFin 口径一致
+    // 终态订单（已定稿/已换人/已取消）不再显示截稿逾期预警，与列表侧 isFinishedStatus 口径一致
     const _ed = state.editingOrder;
-    if (_ed && (_ed.status === '已定稿' || _ed.status === '已换人')) {
+    if (_ed && isFinishedStatus(_ed.status)) {
       warn.textContent = '';
       warn.className = 'dl-warn';
       return;
@@ -4143,6 +4143,8 @@
     if (LOCK_MID.includes(status)) return { level: 'mid', locked: new Set(['designer']) };
     if (status === '已定稿') return { level: 'terminal', locked: new Set(['designer', 'collab', 'customer', 'amount', 'type', 'title', 'deadline']) };
     if (status === '已换人') return { level: 'switched', locked: new Set(['designer', 'collab']) };
+    // 已取消（客户终止）：终态，锁定全部主信息 + 备注，不允许再修改订单内容
+    if (status === '已取消') return { level: 'cancelled', locked: new Set(['designer', 'collab', 'customer', 'amount', 'type', 'title', 'deadline', 'notes']) };
     return { level: 'open', locked: new Set() };
   }
   let _orderLockSnapshot = null;
@@ -4159,9 +4161,6 @@
     };
     if (rules.level === 'open') return;
     const lock = (el) => { if (!el) return; el.disabled = true; el.classList.add('locked'); };
-    if (rules.locked.has('designer')) {
-      lock(document.getElementById('oDesigner'));
-    }
     if (rules.locked.has('collab')) {
       $$('#modalBox .oCollab').forEach(c => { c.disabled = true; c.classList.add('locked'); });
     }
@@ -4171,13 +4170,30 @@
       if (ar) { ar.disabled = true; ar.classList.add('locked'); }
     }
     if (rules.locked.has('amount')) lock(document.getElementById('oAmount'));
-    if (rules.locked.has('type')) lock(document.getElementById('oType'));
     if (rules.locked.has('title')) lock(document.getElementById('oTitle'));
     if (rules.locked.has('deadline')) {
       lock(document.getElementById('oDeadlineDate'));
       lock(document.getElementById('oDeadlineHour'));
       lock(document.getElementById('oDeadlineMin'));
       $$('#modalBox [data-dl-preset]').forEach(b => { b.disabled = true; b.classList.add('locked'); });
+    }
+    if (rules.locked.has('notes')) lock(document.getElementById('oNotes'));
+
+    // 锁定字段兜底：对下拉类（任务类型/设计师）保留可展开查看，但选择后立即还原快照原值，
+    // 实现“能下拉、改不了”。input 类字段已在上方 lock() 置灰。
+    if (rules.level !== 'open' && _orderLockSnapshot) {
+      const snap = _orderLockSnapshot.fields;
+      const bind = (id, getVal) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const restore = () => { const v = getVal(); if (el.value !== v) el.value = v; };
+        el.addEventListener('change', restore, true);
+        el.addEventListener('input', restore, true);
+      };
+      if (rules.locked.has('type')) bind('oType', () => snap.task_type);
+      if (rules.locked.has('designer')) bind('oDesigner', () => snap.assigned_designer_id);
+      if (rules.locked.has('title')) bind('oTitle', () => snap.title);
+      if (rules.locked.has('amount')) bind('oAmount', () => snap.amount);
     }
   }
 
@@ -4280,6 +4296,7 @@
     const dDesigner = lockRules.locked.has('designer') ? ' disabled' : '';
     const dCollab = lockRules.locked.has('collab') ? ' disabled' : '';
     const dDeadline = lockRules.locked.has('deadline') ? ' disabled' : '';
+    const dNotes = lockRules.locked.has('notes') ? ' disabled' : '';
     // 锁定状态通过禁用态控件本身表达，不再额外显示黄色提示横幅
     const lockBanner = '';
     const infoForm = `
@@ -4289,7 +4306,7 @@
           <div class="form-sec-title">基础信息</div>
           <div class="order-info-row">
             <div class="field oi-title"><label>项目</label><input id="oTitle" value="${esc(o.title)}" placeholder="如：XX公司名片设计"${dTitle}></div>
-            <div class="field oi-type"><label>任务类型</label><select id="oType"${dType}>${window.Cfg.TASK_TYPES.map(t => '<option' + (t === o.task_type ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
+            <div class="field oi-type"><label>任务类型</label><select id="oType">${window.Cfg.TASK_TYPES.map(t => '<option' + (t === o.task_type ? ' selected' : '') + '>' + t + '</option>').join('')}</select></div>
             <div class="field oi-customer customer-combo"><label>客户</label><div class="combo-input-wrap"><input type="hidden" id="oCustomer" value="${esc(o.customer_id || '')}"><input type="text" id="oCustomerText" value="${esc(customerText)}" placeholder="输入客户名，未找到则自动新建" autocomplete="off"${dCustomer}><button type="button" class="combo-arrow" id="oCustomerArrow" title="选择客户" tabindex="-1"${dCustomer}>▼</button></div><div class="customer-suggest" id="oCustomerSuggest" style="display:none"></div></div>
             <div class="field oi-amount"><label>金额（元）</label><input id="oAmount" type="number" value="${o.amount || 0}" placeholder="元"${dAmount}></div>
             <div class="field oi-status"><label>状态</label><div class="ro-box">${softBadge((window.Cfg.STATUS[o.status] || {}).color || '#64748b', esc((window.Cfg.STATUS[o.status] || {}).detail || o.status), 'status-badge')}</div></div>
@@ -4308,7 +4325,7 @@
         <div class="form-section">
           <div class="form-sec-title">派单与协作</div>
           <div class="dispatch-grid">
-            <div class="field dg-left"><label>派单设计师</label><select id="oDesigner"${dDesigner}><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
+            <div class="field dg-left"><label>派单设计师</label><select id="oDesigner"><option value="">未派单</option>${ds.filter(d => isActiveDesign(d) || d.id === o.assigned_designer_id).map(d => '<option value="' + d.id + '"' + (d.id === o.assigned_designer_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('')}</select></div>
             <div class="field dg-collab">
               <div class="dg-collab-head"><label>协作设计师 <span class="muted" style="font-weight:400;font-size:11px">（各计 1 单）</span></label><span class="dg-ratio-inline"><label>分成比例</label><input type="number" id="collabShare" min="0" max="1" step="0.05" value="${collabShareVal}"${dCollab} placeholder="0.3" /><span class="muted">默认 ${Math.round(collabShareDefault * 100)}%</span></span></div>
               <div class="chips">${collabHtml ? collabHtml.replace(/class="oCollab"/g, 'class="oCollab"' + dCollab) : '<span style="color:var(--muted);font-size:12px">无其他设计师可选</span>'}</div>
@@ -4369,7 +4386,7 @@
           </div>
           <div class="form-section">
             <div class="form-sec-title">备注</div>
-            <div class="field"><textarea id="oNotes" rows="2" placeholder="订单补充说明…">${esc(o.notes)}</textarea></div>
+            <div class="field"><textarea id="oNotes" rows="2" placeholder="订单补充说明…"${dNotes}>${esc(o.notes)}</textarea></div>
           </div>
           <div class="form-section">
             <div class="form-sec-title">流程时间戳（自动记录，不可修改）</div>
@@ -4474,7 +4491,7 @@
       <div class="modal-actionbar">
         ${o.id && can('orders_delete') ? '<button class="btn danger" id="oDelete">删除</button>' : ''}
         <button class="btn secondary" id="oCancel" data-close>关闭</button>
-        <button class="btn" id="oSave">保存信息</button>
+        <button class="btn" id="oSave"${isFinishedStatus(o.status) ? ' disabled title="订单已完成/已取消，信息已锁定不可修改" style="opacity:.5;cursor:not-allowed"' : ''}>保存信息</button>
       </div>`;
     } else {
       html = `
