@@ -5,8 +5,9 @@
  * 关键业务规则（来自用户需求 + 定稿率考核管理办法）：
  *  1) 定稿率考核窗口：上月26日 00:00  ~  本月25日 23:59（按接单时间）
  *  2) 定稿判定：status=已定稿 且 revision_count<=1（修改≥2次不计入定稿）
- *  3) 定稿率 = 窗口内“定稿”单数 / 窗口内接单总数
- *  4) 完成率 = 窗口内“已定稿”单数 / 窗口内接单总数
+ *  3) 定稿率 = 窗口内“定稿”单数 / 窗口内(接单−客户取消)数
+ *  4) 完成率 = 窗口内“已定稿”单数 / 窗口内(接单−客户取消)数
+ *     —— 客户取消/终止合作的订单（status=已取消）不计入定稿率/完成率分母，避免设计师因客户原因被扣绩效；取消率单独统计。
  *  5) 绩效系数：按定稿率阶梯（≥90%→1.4 … <65%→0.8）
  *  6) 小单提成：窗口内“已定稿的小单”数
  *        >10单 → 30元/单；>5单(且≤10) → 20元/单；≤5单 → 0
@@ -63,13 +64,16 @@ window.Calc = (function () {
   // 绩效月报与经营分析共用此函数，保证工资语义一致
   function designerWage(designer, orders, inRange, settings, teamAvgSmall) {
     const mine = orders.filter(o => o.assigned_designer_id === designer.id && inRange(o));
+    // 接单量 total：仍按实际接单计（含客户取消），用于展示；
+    // 但定稿率/完成率分母用 effective（排除客户取消），避免客户取消拉低绩效系数。
+    const effective = mine.filter(o => o.status !== '已取消');
     const total = mine.length;
     const finalizedOrders = mine.filter(isFinalized);
     const finalizedCount = finalizedOrders.length;
     const finalizedAny = mine.filter(o => o.status === '已定稿').length;
 
-    const rate = total ? finalizedCount / total : 0;        // 定稿率
-    const completion = total ? finalizedAny / total : 0;     // 完成率
+    const rate = effective.length ? finalizedCount / effective.length : 0;        // 定稿率（分母排除客户取消）
+    const completion = effective.length ? finalizedAny / effective.length : 0;     // 完成率（分母排除客户取消）
     const coef = window.Cfg.perfCoefficient(rate);
 
     // 小单（已定稿的小单才算有效小单）
@@ -506,6 +510,7 @@ window.Calc = (function () {
         revenue: Math.round(revenue * 100) / 100,
         complaints,
         dispatchOrders: dispatchOrders.length,
+        effectiveDispatch: effectiveDispatch.length,   // 派单−客户取消，作为团队定稿率分母
         cancelCount: cancelledOrders.length,
         finalizedCount: finalizedAll.length,
         avgCycleTeam: Math.round(avgCycleTeam * 100) / 100,

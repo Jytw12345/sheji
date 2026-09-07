@@ -5610,7 +5610,9 @@
     // 绩效指标（更多内容）
     const finalizedAny = orders.filter(o => o.status === '已定稿');
     const dispatchCount = orders.length;
-    const finalizeRate = dispatchCount ? finalizedAny.length / dispatchCount : 0;
+    // 客户取消的订单不计入定稿率分母（与经营分析/绩效月报口径统一）
+    const wbEffectiveCount = orders.filter(o => o.status !== '已取消').length;
+    const finalizeRate = wbEffectiveCount ? finalizedAny.length / wbEffectiveCount : 0;
     const proposalDecided = orders.filter(o => o.proposal_pass_at || o.proposal_failed_at);
     const firstPass = proposalDecided.filter(o => (o.proposal_count || 0) <= 1 && !o.proposal_failed_at).length;
     const firstProposalPassRate = proposalDecided.length ? firstPass / proposalDecided.length : 0;
@@ -7101,7 +7103,7 @@
         [txt('提案通过率'), pctCell(t.proposalPassRate), muted('提案通过 ÷ 已决提案')],
         [txt('一次提案通过率'), pctCell(t.firstProposalPassRate), muted('首次提案一次过 ÷ 已决提案')],
         [txt('初稿定稿率'), pctCell(t.draftToFinalizeRate), muted('已定稿且修改 0 次')],
-        [txt('定稿率'), pctCell(t.dispatchOrders ? t.finalizedCount / t.dispatchOrders : 0), muted('定稿 ÷ 派单总数')],
+        [txt('定稿率'), pctCell(t.effectiveDispatch ? t.finalizedCount / t.effectiveDispatch : 0), muted('定稿 ÷ (派单−客户取消)')],
         [txt('设计返工率'), pctCell(t.reworkRate), muted('有修改 ÷ 已定稿')],
         [txt('当前在制'), num(t.currentInProgress), muted('全组实时未结案')],
         [txt('峰值并发(单人最高)'), num(t.peakConcurrency), muted('范围内单人同时最多')],
@@ -7189,7 +7191,7 @@
           ['提案通过率', pct(t.proposalPassRate), '提案通过 ÷ 已决提案'],
           ['一次提案通过率', pct(t.firstProposalPassRate), '首次提案一次过 ÷ 已决提案'],
           ['初稿定稿率', pct(t.draftToFinalizeRate), '已定稿且修改 0 次'],
-          ['定稿率', pct(t.dispatchOrders ? t.finalizedCount / t.dispatchOrders : 0), '定稿 ÷ 派单总数'],
+          ['定稿率', pct(t.effectiveDispatch ? t.finalizedCount / t.effectiveDispatch : 0), '定稿 ÷ (派单−客户取消)'],
           ['设计返工率', pct(t.reworkRate), '有修改 ÷ 已定稿'],
           ['当前在制', t.currentInProgress, '全组实时未结案'],
           ['峰值并发(单人最高)', t.peakConcurrency, '范围内单人同时最多'],
@@ -7715,7 +7717,7 @@
     const periodLabel = mode === 'custom' ? '自定义' : (mode === 'previous' ? '上期' : '本期');
     $('#anaWindow').textContent = periodLabel + ' ' + fmtTime(win.start).slice(0, 10) + ' ~ ' + fmtTime(win.end).slice(0, 10);
 
-    const finalizeRateTeam = t.dispatchOrders ? t.finalizedCount / t.dispatchOrders : 0;
+    const finalizeRateTeam = t.effectiveDispatch ? t.finalizedCount / t.effectiveDispatch : 0;
     const kpi = (label, value, hint, icon, accent) =>
       '<div class="kpi" data-accent="' + (accent || '#6366f1') + '">' +
         '<div class="kpi-icon">' + (icon || '📊') + '</div>' +
@@ -7730,7 +7732,7 @@
       kpi('提案通过率', pct(t.proposalPassRate), '提案通过 ÷ 已决提案', '🎯', '#f59e0b') +
       kpi('一次提案通过率', pct(t.firstProposalPassRate), '首次提案一次过 ÷ 已决提案', '🎯', '#8b5cf6') +
       kpi('初稿定稿率', pct(t.draftToFinalizeRate), '已定稿且修改 0 次', '🎨', '#4f46e5') +
-      kpi('定稿率', pct(finalizeRateTeam), '定稿 ÷ 派单总数', '✅', '#06b6d4') +
+      kpi('定稿率', pct(finalizeRateTeam), '定稿 ÷ (派单−客户取消)', '✅', '#06b6d4') +
       kpi('设计返工率', pct(t.reworkRate), '有修改 ÷ 已定稿', '🔴', '#f97316') +
       kpi('当前在制', t.currentInProgress, '全组实时未结案', '⚡', '#3b82f6') +
       kpi('峰值并发(单人最高)', t.peakConcurrency, '范围内单人同时最多', '📈', '#64748b') +
