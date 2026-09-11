@@ -4134,12 +4134,15 @@
   }
 
   // 订单字段锁定规则（分节点、分字段，避免一刀切）
-  //  - 派单设计师 / 协作设计师：派单那一刻占用产能，从「派单」起锁定（改走换人流程）
+  //  - 派单设计师 / 协作设计师：从「提案」起占用产能并锁定（改走换人流程）；
+  //    「派单」状态设计尚未开始，允许直接在下拉里改派设计师（不动状态、不进协作、不留换人记录）
   //  - 客户 / 金额 / 任务类型 / 项目名 / 截稿日期：交付后入账依据，「已定稿」定格；
   //    「已换人」仅锁定设计师/协作（产能占用），截稿/金额等放开给新接手设计师重约
   //  - 备注 / 文件路径 / 设计稿路径 / 投诉记录：永不锁定（交付后常需补录、投诉）
   const LOCK_MID = ['派单', '提案', '提案不通过', '设计中', '初稿', '客户反馈', '修改中'];
   function orderLockRules(status) {
+    // 派单状态：设计未开始，放开「派单设计师」可直接改派（区别于提案起的锁定中间态）
+    if (status === '派单') return { level: 'mid', locked: new Set() };
     if (LOCK_MID.includes(status)) return { level: 'mid', locked: new Set(['designer']) };
     if (status === '已定稿') return { level: 'terminal', locked: new Set(['designer', 'collab', 'customer', 'amount', 'type', 'title', 'deadline']) };
     if (status === '已换人') return { level: 'switched', locked: new Set(['designer', 'collab']) };
@@ -5767,7 +5770,7 @@
       case '派单': add('proposal', '提交提案'); break;
       case '提案': add('proposal_pass', '提案通过'); add('proposal_fail', '不通过'); break;
       case '提案不通过': add('proposal_again', '二次提案'); add('switch', '换人'); break;
-      case '设计中': add('draft', '提交初稿'); break;
+      case '设计中': add('draft', '完成初稿'); break;
       case '初稿': add('feedback', '送审客户'); break;
       case '客户反馈': add('finalize', '定稿'); add('revise', '需要修改'); break;
       case '修改中': add('finalize', '客户定稿'); add('switch', '换人'); break;
@@ -6329,7 +6332,7 @@
       case '派单': return b('proposal', '提交提案', 'primary') + rv;
       case '提案': return b('proposal_pass', '提案通过', 'ok') + b('proposal_fail', '不通过', 'warn') + rv;
       case '提案不通过': return b('proposal_again', '二次提案', '') + b('switch', '换人', 'danger') + rv;
-      case '设计中': return b('draft', '提交初稿', 'primary') + rv;
+      case '设计中': return b('draft', '完成初稿', 'primary') + rv;
       case '初稿': return b('feedback', '送审客户', 'primary') + rv;
       case '客户反馈': return b('finalize', '定稿', 'ok') + b('revise', '需要修改', 'warn') + rv;
       case '修改中': return b('finalize', '客户定稿', 'ok') + b('switch', '换人', 'danger') + rv;
@@ -6342,7 +6345,7 @@
   function nextActionText(status) {
     const map = {
       '接单': '等待派单', '派单': '提交提案', '提案': '提案通过或不通过', '提案不通过': '继续提案或换人',
-      '设计中': '提交初稿', '初稿': '送审客户', '客户反馈': '定稿或修改', '修改中': '修改完成后定稿',
+      '设计中': '完成初稿', '初稿': '送审客户', '客户反馈': '定稿或修改', '修改中': '修改完成后定稿',
       '已定稿': '已完成', '已换人': '已换人'
     };
     return map[status] || status;
