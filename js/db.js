@@ -201,7 +201,7 @@ window.DB = (function () {
     'revision_at','redraft_at','finalized_at','cancel_at','cancel_reason','pre_cancel_status',
     'switched_at','switch_reason','revision_note','notes','coupon_code','coupon_origin',
     'proposal_log','proposal_failed_log','draft_log','revision_log','redraft_log','feedback_failed_log',
-    'file_paths','design_paths','temp_assist_log',
+    'file_paths','design_paths','temp_assist_log','internal_order_no',
     'created_at','updated_at','deleted_at','delete_reason'
   ].join(',');
   // 【v483 修复】safe() 必须放在模块顶层（之前误放在 loadAll 内部 → loadLive 跨作用域访问 ReferenceError，
@@ -639,6 +639,32 @@ window.DB = (function () {
     emit();
   }
   async function deleteCustomer(id, reason) { return remove('customers', id, reason); }
+
+  // 合并客户（v575）：把 source 名下所有未删除订单并入 target，随后 source 移入回收站（软删 RPC 校验角色）。
+  // 若 source 是内协客户而 target 不是，is_internal 一并带到 target（避免合并后内协提醒消失）。
+  // 返回 { moved }（实际转移的订单数；RLS 下仅统计当前用户有权更新的行）。
+  async function mergeCustomers(sourceId, targetId) {
+    const tgt = cache.customers.find(c => c.id === targetId);
+    if (!tgt) throw new Error('目标客户不存在或已删除');
+    const src = cache.customers.find(c => c.id === sourceId);
+    if (src && tgt && src.is_internal && !tgt.is_internal) {
+      const { error: ie } = await sb.from('customers').update({ is_internal: true }).eq('id', targetId);
+      if (ie) throw ie;
+      tgt.is_internal = true;
+    }
+    const { data, error } = await sb.from('orders')
+      .update({ customer_id: targetId })
+      .eq('customer_id', sourceId)
+      .is('deleted_at', null)
+      .select('id');
+    if (error) { fireAuthError(error); throw error; }
+    const moved = (data || []).length;
+    cache.orders.forEach(o => { if (o.customer_id === sourceId) o.customer_id = targetId; });
+    scheduleReconcile('orders');
+    await remove('customers', sourceId, '合并客户：订单已并入目标客户');
+    emit();
+    return { moved };
+  }
 
   // 仅更新某客户的 contacts_json（供 app.js 在订单弹窗内快捷添加联系人时调用，
   // 避免直接访问未导出的内部 supabase client `sb`）
@@ -1142,7 +1168,7 @@ window.DB = (function () {
     getSettings, saveSettings, reloadSettings, loadSettingsRobust, loadDesignersRobust, probeSupabaseSchema,
     primeCache, listDesigners, saveDesigner, deleteDesigner,
     listGroups, saveGroup, deleteGroup,
-    listCustomers, saveCustomer, saveCustomerContacts, deleteCustomer, cascadeCustomerName,
+    listCustomers, saveCustomer, saveCustomerContacts, deleteCustomer, cascadeCustomerName, mergeCustomers,
     listOrders, loadOrderDetail, loadOrderComplaintLogs, saveOrder, deleteOrder, restoreDeleted, purgeDeleted, listDeleted, genOrderNo, reconnectSupabase,
     logOperation, queryLogs,
     auth, onAuthError

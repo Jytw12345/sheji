@@ -41,6 +41,7 @@
     anaMode: 'current',         // 经营分析统计方式：current / previous / custom
     _riskMap: null,             // 逾期风险缓存（数据刷新后失效）
     _riskOnly: false,           // 订单列表：仅显示红色风险单
+    _internalOnly: false,       // 订单列表：仅显示待发内协单（内协客户且未登记单号）
     // 【v540】抢单平台(xinxifabu)新需求实时提醒
     _newReqUnread: 0,           // 未读新需求数
     _newReqNotify: true,        // 提醒开关（默认开，localStorage ds_newreq_notify 可关）
@@ -288,13 +289,14 @@
   // 从仪表盘待办卡片跳订单列表并套用对应筛选
   function gotoOrders(filterKey) {
     switchTab('orders');
-    state.filters = {}; state.orderPage = 1; state._overdueOnly = false; state._dueTodayOnly = false; state._riskOnly = false;
+    state.filters = {}; state.orderPage = 1; state._overdueOnly = false; state._dueTodayOnly = false; state._riskOnly = false; state._internalOnly = false;
     const setF = (id, v) => { const el = $(id); if (el) el.value = v; };
     if (filterKey === 'status=接单') setF('#fStatus', '接单');
     else if (filterKey === 'status=派单') setF('#fStatus', '派单');
     else if (filterKey === 'due=today') { state._dueTodayOnly = true; setQuickRange('all'); }
     else if (filterKey === 'overdue=1') { state._overdueOnly = true; }
     else if (filterKey === 'risk=red') { state._riskOnly = true; setQuickRange('all'); }
+    else if (filterKey === 'internal=1') { state._internalOnly = true; setQuickRange('all'); }
     readFilters(); renderOrders(); updateFilterBadge();
   }
   function updateOverdueBadge() {
@@ -356,6 +358,20 @@
   }
   function riskInfo(o) { return riskMap()[o.id] || { level: 'none', reason: '' }; }
   function isFinishedStatus(s) { return s === '已定稿' || s === '已换人' || s === '已取消'; }
+  // 内协单：客户为内部分公司/协作客户，且订单尚未登记内协单号 → 待发
+  function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
+  function isInternalPending(o) {
+    if (!o || !o.customer_id) return false;
+    if (!internalCustomerSet().has(o.customer_id)) return false;
+    return !(o.internal_order_no && String(o.internal_order_no).trim());
+  }
+  function internalInfoHtml(o) {
+    const pending = isInternalPending(o);
+    if (!internalCustomerSet().has(o.customer_id)) return '';
+    return pending
+      ? '<span class="internal-tag pending" title="内部分公司/协作客户订单：尚未登记内协单号">🔶 内协单待发</span>'
+      : '<span class="internal-tag done" title="内协单号：' + esc(o.internal_order_no || '') + '">✅ 已发内协单</span>';
+  }
   // 风险标签 HTML（红/黄/绿圆点 + 文案；无风险返回空）
   function riskBadge(o) {
     const r = riskInfo(o);
@@ -3050,7 +3066,7 @@
     $('#btnExportOrders').addEventListener('click', exportOrdersCSV);
     // 下拉/搜索自动筛选（关键字防抖 200ms）；任何筛选变化都回到第 1 页
     let kwTimer;
-    const autoFilter = () => { state.orderPage = 1; state._overdueOnly = false; state._dueTodayOnly = false; state._riskOnly = false; readFilters(); renderOrders(); };
+    const autoFilter = () => { state.orderPage = 1; state._overdueOnly = false; state._dueTodayOnly = false; state._riskOnly = false; state._internalOnly = false; readFilters(); renderOrders(); };
     ['fStatus', 'fDesigner', 'fCustomer', 'fCategory', 'fTaskType'].forEach(id => {
       $('#' + id).addEventListener('change', autoFilter);
     });
@@ -3079,7 +3095,7 @@
     $('#btnResetFilter').addEventListener('click', () => {
       state.filters = {};
       state.orderPage = 1;
-      state._overdueOnly = false; state._dueTodayOnly = false; state._riskOnly = false;
+      state._overdueOnly = false; state._dueTodayOnly = false; state._riskOnly = false; state._internalOnly = false;
       ['fStatus','fDesigner','fCustomer','fCategory','fTaskType','fDateFrom','fDateTo','fKeyword'].forEach(id => { $('#' + id).value = ''; });
       const fr = $('#fRange'); if (fr) fr.value = 'all';
       renderOrders(); updateFilterBadge();
@@ -3327,9 +3343,9 @@
     const todo = [
       ['待派单', allO.filter(o => o.status === '接单').length, 'status=接单'],
       ['待提案', allO.filter(o => o.status === '派单').length, 'status=派单'],
+      ['待发内协单', allO.filter(o => isInternalPending(o)).length, 'internal=1'],
       ['今日截稿', allO.filter(o => o.deadline && o.deadline.slice(0, 10) === tdy && !isFin(o.status)).length, 'due=today'],
-      ['风险预警', allO.filter(o => { const r = riskInfo(o); return r.level === 'red' && !isFin(o.status); }).length, 'risk=red'],
-      ['已逾期', allO.filter(o => o.deadline && new Date(o.deadline).getTime() < nowTs && !isFin(o.status)).length, 'overdue=1']
+      ['风险预警', allO.filter(o => { const r = riskInfo(o); return r.level === 'red' && !isFin(o.status); }).length, 'risk=red']
     ];
     $('#dashTodo').innerHTML = todo.map(t =>
       '<button class="todo-card' + ((t[2] === 'overdue=1' || t[2] === 'risk=red') && t[1] ? ' danger' : '') + '" data-todo="' + t[2] + '">' +
@@ -3442,6 +3458,7 @@
     if (state._overdueOnly) orders = orders.filter(o => o.deadline && new Date(o.deadline).getTime() < Date.now() && !isFinishedStatus(o.status));
     if (state._dueTodayOnly) { const t = new Date().toISOString().slice(0, 10); orders = orders.filter(o => o.deadline && o.deadline.slice(0, 10) === t); }
     if (state._riskOnly) orders = orders.filter(o => { const r = riskInfo(o); return r.level === 'red' && !isFinishedStatus(o.status); });
+    if (state._internalOnly) orders = orders.filter(o => isInternalPending(o));
     // 分页：每页条数取用户自定义的 orderPageSize（默认 ORDER_PAGE_SIZE），避免几千行一次性渲染导致卡顿
     const pageSize = state.orderPageSize || ORDER_PAGE_SIZE;
     const total = orders.length;
@@ -3468,7 +3485,7 @@
       return '<tr data-id="' + o.id + '"' + rowCls + '">' +
         '<td title="' + esc(o.order_no || '') + '">' + esc(o.order_no || '') + '</td>' +
         '<td title="' + esc(o.title || '') + '">' + esc(o.title) + (o.notes ? ' <span title="' + esc(o.notes) + '">📝</span>' : '') + '</td>' +
-        '<td title="' + esc(o.customer_name || '') + '">' + esc(o.customer_name || '') + '</td>' +
+        '<td title="' + esc(o.customer_name || '') + '">' + esc(o.customer_name || '') + (isInternalPending(o) ? ' <span class="internal-tag pending" title="内协客户订单：尚未登记内协单号">🔶待发</span>' : '') + '</td>' +
         '<td>' + esc(o.task_type) + '</td>' +
         '<td class="num">¥' + money(o.amount) + (o.coupon_code ? ' <span class="od-coupon-tag" title="客户已用券：' + esc(o.coupon_code) + '">🎟️</span>' : '') + '</td>' +
         '<td class="center">' + catPill(cat) + (o.complaint_count ? ' <span class="badge bad">投诉' + o.complaint_count + '</span>' : '') + '</td>' +
@@ -3708,6 +3725,7 @@
       if (c.phone && !parts.some(p => p.includes(esc(c.phone)))) parts.push('<span class="cust-detail">📞 ' + esc(c.phone) + '</span>');
       if (c.address) parts.push('<span class="cust-detail">📍 ' + esc(c.address) + '</span>');
       if (c.tag) parts.push('<span class="cust-tag">' + esc(c.tag) + '</span>');
+      if (c.is_internal) parts.push('<span class="cust-tag internal-cust" title="内部分公司 / 内部协作客户：订单需发内协单">🔶 内协客户</span>');
       return '<span class="cust-line">' + parts.join('') + '</span>';
     }
     const parts = [];
@@ -4325,6 +4343,17 @@
           </div>
         </div>
 
+        <div class="form-section internal-sec">
+          <div class="form-sec-title">内协单${internalInfoHtml(o)}</div>
+          ${internalCustomerSet().has(o.customer_id)
+            ? `<div class="internal-row">
+                 <div class="field" style="flex:1"><label>内协单号（填写即视为已发）</label><input id="oInternalNo" value="${esc(o.internal_order_no || '')}" placeholder="如：NX-2026-001"></div>
+                 <button type="button" class="btn sm secondary" id="oInternalMark" title="一键标记为已发（自动生成单号）">标记已发</button>
+               </div>
+               <div class="muted" style="font-size:12px;margin-top:4px">该客户为内部分公司 / 内部协作客户，接单后需发内协单。</div>`
+            : `<div class="muted" style="font-size:12px">该客户非内协客户，无需发内协单。</div>`}
+        </div>
+
         <div class="form-section">
           <div class="form-sec-title">派单与协作</div>
           <div class="dispatch-grid">
@@ -4513,6 +4542,20 @@
     $$('#modalBox [data-close]').forEach(b => b.addEventListener('click', () => closeModal()));
     if ($('#oDelete')) $('#oDelete').addEventListener('click', () => { delOrder(o.id); });
     $('#oSave').addEventListener('click', () => saveOrderFromModal());
+    // 内协单：一键标记为已发（自动生成单号，填写即视为已发）
+    const internalMarkBtn = $('#oInternalMark');
+    if (internalMarkBtn) internalMarkBtn.addEventListener('click', () => {
+      const inp = $('#oInternalNo');
+      if (!inp) return;
+      if (!inp.value.trim()) {
+        const d = new Date();
+        const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+        inp.value = 'NX-' + ymd + '-' + String(Math.floor(Math.random() * 900) + 100);
+      }
+      const ed = state.editingOrder; if (ed) ed._dirty = true;
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      toast('已标记已发内协单：' + inp.value.trim());
+    });
     // 方案B：详情弹窗中任何表单控件改动都标记「未保存」，关闭时据此二次确认
     if (isDetail) {
       const markDirty = () => { const ed = state.editingOrder; if (ed) ed._dirty = true; };
@@ -5238,6 +5281,8 @@
     // 注意：revision_count / complaint_count / rework_category 不再从表单读取，
     // 改为由流程动作自动累计（需要修改 +1 / ＋投诉 +1），防止手动改小篡改绩效。
     o.notes = $('#oNotes').value;
+    // 内协单号：仅当该单客户为内协客户时读取（非内协客户不渲染该输入框）
+    o.internal_order_no = ($('#oInternalNo') && $('#oInternalNo').value.trim()) ? $('#oInternalNo').value.trim() : (o.internal_order_no || null);
     o.file_paths = ($('#oFilePaths').value || '').split('\n').map(l => normalizePath(l)).filter(Boolean);
     o.design_paths = ($('#oDesignPaths').value || '').split('\n').map(l => normalizePath(l)).filter(Boolean);
     o.collab_designer_ids = $$('#modalBox .oCollab').filter(c => c.checked).map(c => c.value);
@@ -6248,8 +6293,10 @@
         (hasActiveTa ? '<button type="button" class="btn-mini wb-ta-done" data-ta-done-order="' + esc(o.id) + '" data-ta-done-did="' + esc(designer.id) + '" title="标记我的临时协助已完成">完成</button>' : '') +
         '</div>'
       : '';
+    const internalPending = isInternalPending(o);
+    const wbClass = (dl.cardClass ? dl.cardClass + ' ' : '') + (internalPending ? 'wb-internal-pending' : '');
     return `
-      <div class="wb-card ${dl.cardClass}" data-wb-id="${esc(o.id)}">
+      <div class="wb-card ${wbClass}" data-wb-id="${esc(o.id)}">
         <div class="wb-head-ring">
           ${ringSvg}
           <div class="wb-head-main">
@@ -6265,7 +6312,7 @@
             </div>
           </div>
         </div>
-        ${dl.badge ? '<div class="wb-dl-row">' + dl.badge + '</div>' : ''}
+        ${((dl.badge || internalPending) ? '<div class="wb-dl-row">' + (dl.badge ? dl.badge + ' ' : '') + (internalPending ? '<span class="wb-dl-badge warn">🔶 内协单待发</span>' : '') + '</div>' : '')}
         <div class="wb-body">
           ${mainOwnerLine}
           ${taLine}
@@ -6915,6 +6962,52 @@
     } finally { unlockOp('delCustomer:' + cid); }
   }
   function newCustomer() { openCustomerModal(null); }
+
+  // 合并客户（v575）：重复客户二选一保留，源客户订单全部并入目标客户后移入回收站。仅管理员/店长。
+  function mergeCustomerModal(source) {
+    const role = (state.currentUser && state.currentUser.role) || '';
+    if (role !== '管理员' && role !== '店长') { toast('仅管理员/店长可合并客户'); return; }
+    const orders = state._orders || [];
+    const others = (state._customers || []).filter(c => c.id !== source.id);
+    const cnt = id => orders.filter(o => o.customer_id === id && !o.deleted_at).length;
+    openModal(`<button class="close" data-close>×</button><h3>合并客户：「${esc(source.name)}」</h3>
+      <p class="muted" style="font-size:13px;margin:0 0 8px">点选下方要<b>保留</b>的目标客户：本客户名下 ${cnt(source.id)} 个订单将全部并入目标客户，本客户移入回收站（设置 → 回收站 可还原客户本身，订单归属不回退）。</p>
+      <input id="mSearch" placeholder="搜索目标客户名称 / 电话" style="width:100%">
+      <div id="mList" style="margin-top:8px;max-height:320px;overflow:auto"></div>`);
+    $$('#modalBox [data-close]').forEach(b => b.addEventListener('click', () => closeModal()));
+    const renderList = () => {
+      const q = ($('#mSearch').value || '').trim().toLowerCase();
+      const items = others
+        .filter(c => !q || [c.name, c.phone, c.company].join(' ').toLowerCase().indexOf(q) !== -1)
+        .sort((a, b) => cnt(b.id) - cnt(a.id))
+        .slice(0, 50);
+      $('#mList').innerHTML = items.length ? items.map(c =>
+        '<div class="merge-item" data-mid="' + esc(c.id) + '">' +
+        '<b>' + esc(c.name) + '</b>' +
+        '<span class="muted">' + esc(c.phone || '') + '</span>' +
+        '<span class="muted">' + cnt(c.id) + ' 单</span></div>'
+      ).join('') : '<div class="empty" style="padding:14px;text-align:center">无匹配客户</div>';
+      $$('#mList .merge-item').forEach(el => el.addEventListener('click', async () => {
+        const tgt = others.find(c => c.id === el.dataset.mid);
+        if (!tgt) return;
+        closeModal();
+        const ok = await uiConfirm('确认合并：「' + source.name + '」的 ' + cnt(source.id) + ' 个订单将全部并入「' + tgt.name + '」，随后「' + source.name + '」移入回收站。确定执行？');
+        if (!ok) return;
+        if (!lockOp('mergeCustomer:' + source.id)) return;
+        try {
+          const r = await DB.mergeCustomers(source.id, tgt.id);
+          logOp('合并客户', '客户', source.id, source.name + ' → ' + tgt.name, null);
+          toast('已合并：' + r.moved + ' 个订单并入「' + tgt.name + '」');
+          renderCustomers(); renderOrders();
+          await refreshAll();
+        } catch (e) {
+          toast('合并失败：' + (e && e.message ? e.message : e));
+        } finally { unlockOp('mergeCustomer:' + source.id); }
+      }));
+    };
+    renderList();
+    $('#mSearch').addEventListener('input', renderList);
+  }
   // 新建/编辑客户共用：传入已有客户对象即进入编辑模式，保存时级联更新其历史订单的客户名
   function openCustomerModal(existing) {
     const c = existing || {};
@@ -6927,6 +7020,10 @@
         <div class="field"><label>地址</label><input id="cAddress" value="${esc(c.address || '')}"></div>
         <div class="field"><label>文字标注</label><input id="cTag" value="${esc(c.tag || '')}" placeholder="如：重点客户 / 价格敏感 / 急单优先"></div>
       </div>
+      <label class="internal-check${c.is_internal ? ' on' : ''}">
+        <input type="checkbox" id="cInternal"${c.is_internal ? ' checked' : ''}>
+        <span class="ic-txt"><b>内部分公司 / 内部协作客户</b><small>此类客户的订单需发内协单，未发会在工作台与订单列表提醒</small></span>
+      </label>
       <div class="field" style="margin-top:10px">
         <label>更多联系人（可选）</label>
         <div id="cExtraContacts"></div>
@@ -6992,6 +7089,7 @@
           id: c.id || undefined,
           name, company: $('#cCompany').value, phone: $('#cPhone').value, address: $('#cAddress').value, notes: $('#cNotes').value,
           contacts_json,
+          is_internal: !!$('#cInternal') && $('#cInternal').checked,
           // 新建客户写入归属人；编辑时不动 created_by（保留原始创建者）
           created_by: existing ? undefined : ((state.currentUser && state.currentUser.id) || undefined)
         });
@@ -7052,11 +7150,13 @@
         '<tr style="cursor:pointer" data-oid="' + o.id + '" title="点击查看该订单"><td>' + esc(o.order_no) + '</td><td>' + esc(o.title) + '</td><td class="num">¥' + money(o.amount) + '</td><td>' + pill(o.status) + '</td><td>' + fmtTime(o.intake_at) + '</td></tr>'
       ).join('') : '<tr><td colspan="5" class="empty">暂无订单</td></tr>') + '</tbody></table></div>' +
       '<div class="modal-foot">' + (can('customers_edit') ? '<button class="btn" id="cEdit">编辑</button>' : '') +
+        ((state.currentUser && (state.currentUser.role === '管理员' || state.currentUser.role === '店长')) ? '<button class="btn" id="cMerge">合并到其他客户…</button>' : '') +
         (can('orders_create') ? '<button class="btn primary" id="cNewOrder">为该客户新建订单</button>' : '') +
         '<button class="btn secondary" id="cClose" data-close>关闭</button></div>';
     openModal(html);
     $$('#modalBox [data-close]').forEach(b => b.addEventListener('click', () => closeModal()));
     const cEdit = $('#cEdit'); if (cEdit) cEdit.addEventListener('click', () => { closeModal(); openCustomerModal(c); });
+    const cMerge = $('#cMerge'); if (cMerge) cMerge.addEventListener('click', () => mergeCustomerModal(c));
     const cNewOrder = $('#cNewOrder'); if (cNewOrder) cNewOrder.addEventListener('click', () => { closeModal(); newOrderForCustomer(c.id); });
     const cClose = $('#cClose'); if (cClose) cClose.addEventListener('click', () => closeModal());
     // 历史订单行点击 → 直接打开对应订单详情（#custHistoryTable 每次 openModal 都重建，不会重复绑定）
