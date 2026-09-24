@@ -412,21 +412,19 @@
     document.body.appendChild(ov);
     ov.classList.add('show');
     const close = () => ov.remove();
-    const save = async () => {
+    const save = () => {
       const v = ov.querySelector('#wbInternalNo').value.trim();
       if (!v) { toast('请填写内协单号'); return; }
       if (v === cur) { toast('内协单号未变化'); close(); return; }
       if (!lockOp('internalMark:' + o.id)) return;
-      try {
-        o.internal_order_no = v;
-        await DB.saveOrder(o);
-        logOp(cur ? '更新内协单号' : '标记内协单已发', '订单', o.id, (o.order_no || '') + ' 单号：' + v);
-        toast(cur ? '内协单号已更新：' + v : '已标记已发内协单：' + v);
-        close();
-        await refreshAll();
-      } catch (e) {
-        toast((e && e.message) || '保存失败，请重试');
-      } finally { unlockOp('internalMark:' + o.id); }
+      // 乐观更新：立即关弹窗+提示（不等网络往返），存库转后台，失败再回滚并报错
+      o.internal_order_no = v;
+      toast(cur ? '内协单号已更新：' + v : '已标记已发内协单：' + v);
+      close();
+      unlockOp('internalMark:' + o.id);
+      DB.saveOrder(o)
+        .then(() => { logOp(cur ? '更新内协单号' : '标记内协单已发', '订单', o.id, (o.order_no || '') + ' 单号：' + v); return refreshAll(); })
+        .catch(e => { o.internal_order_no = cur; toast('保存失败：' + ((e && e.message) || '请重试')); refreshAll().catch(() => {}); });
     };
     ov.addEventListener('click', e => {
       if (e.target === ov || e.target.closest('[data-no]')) close();
@@ -4625,19 +4623,16 @@
       const cur = (o.internal_order_no || '').trim();
       if (v === cur) { toast('内协单号未变化'); return; }
       if (!lockOp('internalMark:' + o.id)) return;
-      try {
-        o.internal_order_no = v;
-        await DB.saveOrder(o);
-        logOp(cur ? '更新内协单号' : '标记内协单已发', '订单', o.id, (o.order_no || '') + ' 单号：' + v);
-        toast(cur ? '内协单号已更新：' + v : '已标记已发内协单：' + v);
-        // 同步刷新表单标题中的内协单状态标签
-        const sec = internalMarkBtn.closest('.form-section');
-        const secTitle = sec && sec.querySelector('.form-sec-title');
-        if (secTitle) secTitle.innerHTML = '内协单' + internalInfoHtml(o);
-        await refreshAll();
-      } catch (e) {
-        toast((e && e.message) || '保存失败，请重试');
-      } finally { unlockOp('internalMark:' + o.id); }
+      // 乐观更新：立即提示+刷新标签（不等网络往返），存库转后台，失败再回滚并报错
+      o.internal_order_no = v;
+      toast(cur ? '内协单号已更新：' + v : '已标记已发内协单：' + v);
+      const sec = internalMarkBtn.closest('.form-section');
+      const secTitle = sec && sec.querySelector('.form-sec-title');
+      if (secTitle) secTitle.innerHTML = '内协单' + internalInfoHtml(o);
+      unlockOp('internalMark:' + o.id);
+      DB.saveOrder(o)
+        .then(() => { logOp(cur ? '更新内协单号' : '标记内协单已发', '订单', o.id, (o.order_no || '') + ' 单号：' + v); return refreshAll(); })
+        .catch(e => { o.internal_order_no = cur; toast('保存失败：' + ((e && e.message) || '请重试')); refreshAll().catch(() => {}); });
     });
     // 方案B：详情弹窗中任何表单控件改动都标记「未保存」，关闭时据此二次确认
     if (isDetail) {
