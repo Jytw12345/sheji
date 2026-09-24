@@ -3934,6 +3934,17 @@
       if (custInfo) custInfo.querySelector('.cust-meta').innerHTML = customerInfoHtml(cs, cid, true);
       const isNew = cid === '__new__';
       if (newBox) newBox.style.display = isNew ? '' : 'none';
+      // 内协单行：随所选客户是否内协客户显隐，状态标签同步刷新（不改 editingOrder，仅按新客户临时计算）
+      const isec = document.getElementById('oInternalSec');
+      if (isec) {
+        const isInternal = internalCustomerSet().has(cid);
+        isec.style.display = isInternal ? '' : 'none';
+        const lbl = isec.querySelector('.internal-lbl');
+        if (isInternal && lbl) {
+          const o = state.editingOrder;
+          if (o) lbl.innerHTML = '内协单' + internalInfoHtml(Object.assign({}, o, { customer_id: cid }));
+        }
+      }
     }
 
     function filtered(q) {
@@ -4407,15 +4418,12 @@
           </div>
         </div>
 
-        <div class="form-section internal-sec">
-          <div class="form-sec-title">内协单${internalInfoHtml(o)}</div>
-          ${internalCustomerSet().has(o.customer_id)
-            ? `<div class="internal-row">
-                 <div class="field" style="flex:1"><label>内协单号（填写即视为已发）</label><input id="oInternalNo" value="${esc(o.internal_order_no || '')}" placeholder="如：NX-2026-001"></div>
-                 <button type="button" class="btn sm secondary" id="oInternalMark" title="一键标记为已发（自动生成单号）">标记已发</button>
-               </div>
-               <div class="muted" style="font-size:12px;margin-top:4px">该客户为内部分公司 / 内部协作客户，接单后需发内协单。</div>`
-            : `<div class="muted" style="font-size:12px">该客户非内协客户，无需发内协单。</div>`}
+        <div class="form-section internal-sec" id="oInternalSec"${internalCustomerSet().has(o.customer_id) ? '' : ' style="display:none"'}>
+          <div class="internal-row">
+            <span class="internal-lbl" title="内部分公司 / 内部协作客户订单需发内协单，填写单号即视为已发">内协单${internalInfoHtml(o)}</span>
+            <input id="oInternalNo" value="${esc(o.internal_order_no || '')}" placeholder="填写即视为已发，如：NX-2026-001" title="填写内协单号即视为已发；「标记已发」可自动生成单号">
+            <button type="button" class="btn sm secondary" id="oInternalMark" title="一键标记为已发（未填则自动生成单号）">标记已发</button>
+          </div>
         </div>
 
         <div class="form-section">
@@ -4626,8 +4634,9 @@
       // 乐观更新：立即提示+刷新标签（不等网络往返），存库转后台，失败再回滚并报错
       o.internal_order_no = v;
       toast(cur ? '内协单号已更新：' + v : '已标记已发内协单：' + v);
+      // 同步刷新内协单状态标签
       const sec = internalMarkBtn.closest('.form-section');
-      const secTitle = sec && sec.querySelector('.form-sec-title');
+      const secTitle = sec && (sec.querySelector('.internal-lbl') || sec.querySelector('.form-sec-title'));
       if (secTitle) secTitle.innerHTML = '内协单' + internalInfoHtml(o);
       unlockOp('internalMark:' + o.id);
       DB.saveOrder(o)

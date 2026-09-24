@@ -2164,8 +2164,10 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .internal-tag.clickable, .wb-dl-badge.clickable { cursor: pointer; }
 .internal-tag.clickable:hover { filter: brightness(0.95); box-shadow: 0 0 0 2px rgba(180, 83, 9, .18); }
 .wb-dl-badge.clickable:hover { filter: brightness(0.97); box-shadow: 0 0 0 2px rgba(180, 83, 9, .18); }
-.internal-sec .internal-row { display: flex; gap: 8px; align-items: flex-end; }
-.internal-sec .internal-row .field { margin: 0; }
+/* 内协单：单行紧凑布局（标签 + 单号输入 + 标记按钮） */
+.internal-sec .internal-row { display: flex; gap: 8px; align-items: center; }
+.internal-sec .internal-lbl { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: 12px; font-weight: 700; color: var(--ink); white-space: nowrap; }
+.internal-sec .internal-row input { flex: 1; min-width: 0; }
 .internal-check { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 10px 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; cursor: pointer; }
 .internal-check input { width: 16px; height: 16px; flex: none; margin: 0; accent-color: #ea580c; cursor: pointer; }
 .internal-check .ic-txt { display: flex; flex-direction: column; gap: 2px; }
