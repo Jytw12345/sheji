@@ -362,15 +362,78 @@
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
+    if (o.status === '已取消') return false; // 已取消订单不再要求发内协单
     if (!internalCustomerSet().has(o.customer_id)) return false;
     return !(o.internal_order_no && String(o.internal_order_no).trim());
   }
   function internalInfoHtml(o) {
-    const pending = isInternalPending(o);
     if (!internalCustomerSet().has(o.customer_id)) return '';
+    if (o.status === '已取消') {
+      // 已取消订单：未登记单号显示中性提示（不算待发），已登记仍显示已发
+      return (o.internal_order_no && String(o.internal_order_no).trim())
+        ? '<span class="internal-tag done" title="内协单号：' + esc(o.internal_order_no || '') + '">✅ 已发内协单</span>'
+        : '<span class="internal-tag neutral" title="已取消订单无需发内协单">内协单无需</span>';
+    }
+    const pending = isInternalPending(o);
     return pending
       ? '<span class="internal-tag pending" title="内部分公司/协作客户订单：尚未登记内协单号">🔶 内协单待发</span>'
       : '<span class="internal-tag done" title="内协单号：' + esc(o.internal_order_no || '') + '">✅ 已发内协单</span>';
+  }
+  // 内协单号自动生成（NX-YYYYMMDD-NNN）
+  function genInternalNo() {
+    const d = new Date();
+    const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    return 'NX-' + ymd + '-' + String(Math.floor(Math.random() * 900) + 100);
+  }
+  // 内协单登记弹窗：填单号即视为已发（工作台/列表「内协单待发」标签点击进入，已定稿订单也可补登）
+  async function openInternalMarkModal(orderId) {
+    const o = (state._orders || []).find(x => x.id === orderId);
+    if (!o) return;
+    if (o.status === '已取消') { toast('已取消订单无需发内协单'); return; }
+    if (!internalCustomerSet().has(o.customer_id)) { toast('该客户非内协客户，无需发内协单'); return; }
+    const cur = (o.internal_order_no || '').trim();
+    const ov = document.createElement('div');
+    ov.className = 'modal-mask';
+    ov.innerHTML =
+      '<div class="modal" style="max-width:400px">' +
+        '<div class="modal-body" style="padding:18px 16px">' +
+          '<div style="font-size:14px;font-weight:600;margin-bottom:4px">内协单登记 · ' + esc(o.order_no || '') + '</div>' +
+          '<div class="muted" style="font-size:12px;margin-bottom:10px">' + esc(o.title || '') + ' · ' + esc(o.customer_name || '') +
+            (cur ? ' · 当前单号：' + esc(cur) : ' · 尚未登记，填写即视为已发') + '</div>' +
+          '<input id="wbInternalNo" type="text" autocomplete="off" spellcheck="false" value="' + esc(cur || genInternalNo()) + '" ' +
+            'style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:transparent" ' +
+            'placeholder="如：NX-2026-001">' +
+        '</div>' +
+        '<div class="modal-foot" style="padding:0 16px 16px">' +
+          '<button class="btn secondary" data-no>取消</button>' +
+          '<button class="btn" data-yes>' + (cur ? '更新单号' : '标记已发') + '</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    ov.classList.add('show');
+    const close = () => ov.remove();
+    const save = async () => {
+      const v = ov.querySelector('#wbInternalNo').value.trim();
+      if (!v) { toast('请填写内协单号'); return; }
+      if (v === cur) { toast('内协单号未变化'); close(); return; }
+      if (!lockOp('internalMark:' + o.id)) return;
+      try {
+        o.internal_order_no = v;
+        await DB.saveOrder(o);
+        logOp(cur ? '更新内协单号' : '标记内协单已发', '订单', o.id, (o.order_no || '') + ' 单号：' + v);
+        toast(cur ? '内协单号已更新：' + v : '已标记已发内协单：' + v);
+        close();
+        await refreshAll();
+      } catch (e) {
+        toast((e && e.message) || '保存失败，请重试');
+      } finally { unlockOp('internalMark:' + o.id); }
+    };
+    ov.addEventListener('click', e => {
+      if (e.target === ov || e.target.closest('[data-no]')) close();
+      else if (e.target.closest('[data-yes]')) save();
+    });
+    ov.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+    setTimeout(() => { const inp = ov.querySelector('#wbInternalNo'); inp.focus(); inp.select(); }, 50);
   }
   // 风险标签 HTML（红/黄/绿圆点 + 文案；无风险返回空）
   function riskBadge(o) {
@@ -3485,7 +3548,7 @@
       return '<tr data-id="' + o.id + '"' + rowCls + '">' +
         '<td title="' + esc(o.order_no || '') + '">' + esc(o.order_no || '') + '</td>' +
         '<td title="' + esc(o.title || '') + '">' + esc(o.title) + (o.notes ? ' <span title="' + esc(o.notes) + '">📝</span>' : '') + '</td>' +
-        '<td title="' + esc(o.customer_name || '') + '">' + esc(o.customer_name || '') + (isInternalPending(o) ? ' <span class="internal-tag pending" title="内协客户订单：尚未登记内协单号">🔶待发</span>' : '') + '</td>' +
+        '<td title="' + esc(o.customer_name || '') + '">' + esc(o.customer_name || '') + (isInternalPending(o) ? ' <span class="internal-tag pending clickable" data-internal-mark="' + esc(o.id) + '" title="点击登记内协单号，标记已发">🔶待发</span>' : '') + '</td>' +
         '<td>' + esc(o.task_type) + '</td>' +
         '<td class="num">¥' + money(o.amount) + (o.coupon_code ? ' <span class="od-coupon-tag" title="客户已用券：' + esc(o.coupon_code) + '">🎟️</span>' : '') + '</td>' +
         '<td class="center">' + catPill(cat) + (o.complaint_count ? ' <span class="badge bad">投诉' + o.complaint_count + '</span>' : '') + '</td>' +
@@ -3515,6 +3578,9 @@
     const table = $('#ordersTable');
     if (!table._actBound) {
       table.addEventListener('click', e => {
+        // 内协单待发标签：点击弹出登记弹窗（阻止触发行点击打开详情）
+        const im = e.target.closest('[data-internal-mark]');
+        if (im) { e.stopPropagation(); openInternalMarkModal(im.dataset.internalMark); return; }
         const b = e.target.closest('[data-act]');
         if (b) {
           e.stopPropagation();
@@ -4543,18 +4609,35 @@
     if ($('#oDelete')) $('#oDelete').addEventListener('click', () => { delOrder(o.id); });
     $('#oSave').addEventListener('click', () => saveOrderFromModal());
     // 内协单：一键标记为已发（自动生成单号，填写即视为已发）
+    // 已有订单直接存库，已定稿/已换人等终态订单也可补登（不依赖被锁定的「保存信息」按钮）
     const internalMarkBtn = $('#oInternalMark');
-    if (internalMarkBtn) internalMarkBtn.addEventListener('click', () => {
+    if (internalMarkBtn) internalMarkBtn.addEventListener('click', async () => {
       const inp = $('#oInternalNo');
       if (!inp) return;
-      if (!inp.value.trim()) {
-        const d = new Date();
-        const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-        inp.value = 'NX-' + ymd + '-' + String(Math.floor(Math.random() * 900) + 100);
+      const o = state.editingOrder;
+      if (!o || !o.id) { // 新建订单：仅填入输入框，随订单一起保存
+        if (!inp.value.trim()) inp.value = genInternalNo();
+        toast('已填入内协单号：' + inp.value.trim() + '，保存订单后生效');
+        return;
       }
-      const ed = state.editingOrder; if (ed) ed._dirty = true;
-      inp.dispatchEvent(new Event('input', { bubbles: true }));
-      toast('已标记已发内协单：' + inp.value.trim());
+      if (!inp.value.trim()) inp.value = genInternalNo();
+      const v = inp.value.trim();
+      const cur = (o.internal_order_no || '').trim();
+      if (v === cur) { toast('内协单号未变化'); return; }
+      if (!lockOp('internalMark:' + o.id)) return;
+      try {
+        o.internal_order_no = v;
+        await DB.saveOrder(o);
+        logOp(cur ? '更新内协单号' : '标记内协单已发', '订单', o.id, (o.order_no || '') + ' 单号：' + v);
+        toast(cur ? '内协单号已更新：' + v : '已标记已发内协单：' + v);
+        // 同步刷新表单标题中的内协单状态标签
+        const sec = internalMarkBtn.closest('.form-section');
+        const secTitle = sec && sec.querySelector('.form-sec-title');
+        if (secTitle) secTitle.innerHTML = '内协单' + internalInfoHtml(o);
+        await refreshAll();
+      } catch (e) {
+        toast((e && e.message) || '保存失败，请重试');
+      } finally { unlockOp('internalMark:' + o.id); }
     });
     // 方案B：详情弹窗中任何表单控件改动都标记「未保存」，关闭时据此二次确认
     if (isDetail) {
@@ -5765,6 +5848,8 @@
     $$('#workbenchCards [data-openfolder]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openInExplorer(b.dataset.openfolder); }));
     $$('#workbenchCards [data-fpcopy]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); copyText(b.dataset.fpcopy); toast('已复制路径'); }));
     $$('#workbenchCards [data-ta-done-order]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); markTempAssistDone(b.dataset.taDoneOrder, b.dataset.taDoneDid); }));
+    // 内协单待发标签：点击弹出登记弹窗（填单号即视为已发）
+    $$('#workbenchCards [data-internal-mark]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openInternalMarkModal(b.dataset.internalMark); }));
     // 【接入抢单平台】沟通 / 取消审批按钮（data-act），stopPropagation 避免误触发打开订单
     $$('#workbenchCards [data-act]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); routeDrAct(b.dataset.act, b.dataset.req); }));
     // 工作台卡片自定义右键菜单（一次性绑定到容器；innerHTML 重建只换子节点，容器不销毁）
@@ -6312,7 +6397,7 @@
             </div>
           </div>
         </div>
-        ${((dl.badge || internalPending) ? '<div class="wb-dl-row">' + (dl.badge ? dl.badge + ' ' : '') + (internalPending ? '<span class="wb-dl-badge warn">🔶 内协单待发</span>' : '') + '</div>' : '')}
+        ${((dl.badge || internalPending) ? '<div class="wb-dl-row">' + (dl.badge ? dl.badge + ' ' : '') + (internalPending ? '<span class="wb-dl-badge warn clickable" data-internal-mark="' + esc(o.id) + '" title="点击登记内协单号，标记已发">🔶 内协单待发</span>' : '') + '</div>' : '')}
         <div class="wb-body">
           ${mainOwnerLine}
           ${taLine}

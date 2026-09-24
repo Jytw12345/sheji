@@ -121,6 +121,7 @@
   .wb-dl-badge.neutral { background: #1a2332 !important; color: #94a3b8 !important; }
   .internal-tag.pending { background: #451a03 !important; color: #fcd34d !important; }
   .internal-tag.done { background: #064e3b !important; color: #6ee7b7 !important; }
+  .internal-tag.neutral { background: #1a2332 !important; color: #94a3b8 !important; }
   .cust-tag.internal-cust { background: #451a03 !important; color: #fcd34d !important; border-color: #92400e !important; }
   .internal-check { background: #2b1a0e !important; border-color: #7c2d12 !important; }
   .internal-check b { color: #fdba74 !important; }
@@ -2158,6 +2159,11 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .internal-tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-weight: 700; font-size: 12px; line-height: 1.5; white-space: nowrap; }
 .internal-tag.pending { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
 .internal-tag.done { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+.internal-tag.neutral { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+/* 内协单待发标签可点击 → 登记内协单号弹窗 */
+.internal-tag.clickable, .wb-dl-badge.clickable { cursor: pointer; }
+.internal-tag.clickable:hover { filter: brightness(0.95); box-shadow: 0 0 0 2px rgba(180, 83, 9, .18); }
+.wb-dl-badge.clickable:hover { filter: brightness(0.97); box-shadow: 0 0 0 2px rgba(180, 83, 9, .18); }
 .internal-sec .internal-row { display: flex; gap: 8px; align-items: flex-end; }
 .internal-sec .internal-row .field { margin: 0; }
 .internal-check { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 10px 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; cursor: pointer; }
