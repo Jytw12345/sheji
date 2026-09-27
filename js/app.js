@@ -6395,13 +6395,14 @@
                 <div class="wb-meta">
                   <span>${esc(o.order_no || '')}</span>
                   ${riskBadge(o)}
+                  ${internalPending ? '<span class="wb-dl-badge warn clickable" data-internal-mark="' + esc(o.id) + '" title="点击登记内协单号，标记已发">🔶待发</span>' : ''}
                 </div>
               </div>
               ${headRight}
             </div>
           </div>
         </div>
-        ${((dl.badge || internalPending) ? '<div class="wb-dl-row">' + (dl.badge ? dl.badge + ' ' : '') + (internalPending ? '<span class="wb-dl-badge warn clickable" data-internal-mark="' + esc(o.id) + '" title="点击登记内协单号，标记已发">🔶 内协单待发</span>' : '') + '</div>' : '')}
+        ${(dl.badge ? '<div class="wb-dl-row">' + dl.badge + '</div>' : '')}
         <div class="wb-body">
           ${mainOwnerLine}
           ${taLine}
