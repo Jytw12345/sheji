@@ -1,8 +1,8 @@
 /* 设计部工作台 · Service Worker
  * 离线缓存策略：
- *  - 同源核心静态资源：install 时预缓存，运行时 cache-first（保证秒开/离线可用）
- *  - 页面导航(/、/index.html)：network-first，失败回退缓存（保证总能启动）
- *  - 跨域 CDN（Supabase / Chart.js / xlsx）：stale-while-revalidate
+ *  - 同源核心静态资源：install 时预缓存，运行时 SWR（缓存秒回 + 后台刷新，启动不等网络）
+ *  - 页面导航(/、/index.html)：network-first 带 2.5s 超时竞速，慢网络立即回退缓存外壳（保证总能快速启动）
+ *  - 跨域 CDN（Supabase / Chart.js / xlsx）：Supabase 数据 network-first，其余 stale-while-revalidate
  * 注意：所有预缓存路径使用相对路径，自动适配 GitHub Pages 子路径部署。
  */
 const CACHE = 'dw-pwa-v583';
@@ -104,14 +104,22 @@ self.addEventListener('fetch', (event) => {
   // 交给浏览器原生处理，避免 Cache API 不支持这些 scheme 而报错。
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return;
 
-  // 页面导航：network-first，回退缓存外壳
+  // 页面导航：network-first + 2.5s 超时竞速。
+  // 原逻辑纯 network-first：网络挂起时 fetch 要等到浏览器放弃（可达几十秒）才回退缓存，
+  // 表现为 PWA 启动卡在首屏。现在 2.5s 内网络没回来就先用缓存外壳启动（毫秒级进首屏），
+  // 网络响应继续在后台跑完并写入缓存，供下次启动使用。
   if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req)
+    event.respondWith((async () => {
+      const cached = (await caches.match(req, { ignoreSearch: true })) || (await caches.match('./index.html'));
+      const net = fetch(req)
         .then((res) => { cachePut(req, res.clone()); return res; })
-        .catch(() => caches.match(req, { ignoreSearch: true })
-          .then((m) => m || caches.match('./index.html')))
-    );
+        .catch(() => null);
+      const res = await Promise.race([net, new Promise((r) => setTimeout(r, 2500, null))]);
+      if (res) return res;                       // 网络正常（2.5s 内返回最新页面）
+      // 超时：后台网络请求继续跑完（waitUntil 防止被提前终止），本次先用缓存外壳
+      event.waitUntil(net.catch(() => {}));
+      return cached || Response.error();
+    })());
     return;
   }
 
@@ -128,18 +136,21 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 同源静态：network-first（每次取最新，离线回退缓存）。
-  // 这是「漏 bump APPV」的安全网：即便版本参数忘了改，联网时用户照样能拿到最新代码。
-  // 离线回退用 ignoreSearch:true —— PRECACHE 现已带上与页面一致的 ?APPV，正常能精确命中；
-  // 但历史缓存或临时加的查询串（如探测用的 ?t=时间戳）仍可能不一致，忽略查询串更稳。
-  // 另外静态资源 miss 时绝不能回退 index.html：把 HTML 当 JS/CSS 返回会直接让页面崩掉，
-  // 宁可抛网络错误让浏览器如实报错。
+  // 同源静态：SWR（cache-first + 后台刷新）。缓存命中立即返回（首屏秒开，不再等网络），
+  // 同时后台回源拉最新写入缓存，下次启动生效。
+  // 版本更新仍由 index.html 驱动：发版 bump APPV 后页面请求新 ?vNNN → 缓存必 miss →
+  // 走 network 路径直接拿新文件，更新机制不受影响。原 network-first 的「漏 bump 安全网」
+  // 代价是每次启动 7 个文件都等网络（网络差就卡首屏），权衡后改为 SWR：
+  // 唯一代价是「URL 没变但内容变了」时新代码晚一次启动生效（后台已刷新完毕）。
+  // 离线且无缓存时如实报错，绝不回退 index.html（把 HTML 当 JS/CSS 返回会直接让页面崩掉）。
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(req)
-        .then((res) => { cachePut(req, res.clone()); return res; })
-        .catch(() => caches.match(req, { ignoreSearch: true })
-          .then((m) => m || Response.error()))
+      caches.match(req).then((m) => {
+        const net = fetch(req)
+          .then((res) => { cachePut(req, res.clone()); return res; })
+          .catch(() => m || Response.error());
+        return m || net;                          // 有缓存立即返回，network 后台静默刷新
+      })
     );
     return;
   }
