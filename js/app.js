@@ -359,14 +359,10 @@
   function riskInfo(o) { return riskMap()[o.id] || { level: 'none', reason: '' }; }
   function isFinishedStatus(s) { return s === '已定稿' || s === '已换人' || s === '已取消'; }
   // 内协单：客户为内部分公司/协作客户，且订单尚未登记内协单号 → 待发
-  // 「待发」图标：内联 SVG 蓝色包裹箱（不用 emoji，各平台/微信内置浏览器渲染一致）
-  const ICON_IBOX = '<svg class="ibox" viewBox="0 0 32 32" aria-hidden="true" focusable="false">'
-    + '<path d="M2.2 4.9 9 1.9h15.3l5.5 3z" fill="#63B0FF"/>'
-    + '<path d="M22.2 4.6 29 8.2v15.6l-6.8 3.6z" fill="#4DA3FF"/>'
-    + '<rect x="1.6" y="4.6" width="21.6" height="23" rx="4.2" fill="#0A6CD1"/>'
-    + '<rect x="6.5" y="11.3" width="11.8" height="11.4" rx="1.8" fill="none" stroke="#fff" stroke-width="2.1"/>'
-    + '<path d="M7 11.9 12.4 17.2 17.8 11.9" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'
-    + '</svg>';
+  // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
+  // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
+  // CSS .ibox 控制尺寸（整数 px，小尺寸不糊），@2x 图供高 DPI 屏。
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png" srcset="icons/intl-box@2x.png 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;

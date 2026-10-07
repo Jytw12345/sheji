@@ -2162,9 +2162,9 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 .internal-tag.neutral { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
 /* 内协单待发标签可点击 → 登记内协单号弹窗 */
 .internal-tag.clickable, .wb-dl-badge.clickable { cursor: pointer; }
-/* 内协「待发」包裹图标：与文字基线对齐，行内垂直居中 */
-.ibox { display: inline-block; width: 1.05em; height: 1.05em; vertical-align: -0.17em; margin-right: 1px; flex: none; }
-.wb-dl-badge .ibox { margin-right: 0; }
+/* 内协「待发」包裹图标：设计原图（已抠透明底）。固定 14px 整数尺寸，非 em，避免 12.6px 这类小数尺寸导致栅格化发虚 */
+.ibox { display: inline-block; width: 14px; height: 14px; vertical-align: -3px; margin-right: 2px; flex: none; }
+.wb-dl-badge .ibox { margin-right: 0; vertical-align: -2px; }
 .internal-tag.clickable:hover { filter: brightness(0.95); box-shadow: 0 0 0 2px rgba(180, 83, 9, .18); }
 .wb-dl-badge.clickable:hover { filter: brightness(0.97); box-shadow: 0 0 0 2px rgba(180, 83, 9, .18); }
 /* 内协单：单行紧凑布局（标签 + 单号输入 + 标记按钮） */
