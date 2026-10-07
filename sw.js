@@ -5,7 +5,7 @@
  *  - 跨域 CDN（Supabase / Chart.js / xlsx）：Supabase 数据 network-first，其余 stale-while-revalidate
  * 注意：所有预缓存路径使用相对路径，自动适配 GitHub Pages 子路径部署。
  */
-const CACHE = 'dw-pwa-v590';
+const CACHE = 'dw-pwa-v591';
 
 /* 版本参数说明（两套，互相独立）
  *  APPV —— 自研代码（js/*.js、css/styles.css）。每次改前端代码发版都要 +1，
@@ -16,7 +16,7 @@ const CACHE = 'dw-pwa-v590';
  * PRECACHE 里的 URL 必须与 index.html 中的请求 URL 逐字一致，
  * 否则同一个文件会被下载两次（一次 SW 预缓存、一次页面请求），且缓存 key 对不上。
  */
-const APPV = 'v590';
+const APPV = 'v591';
 const LIBV = 'lib2';
 
 const PRECACHE = [
@@ -36,9 +36,10 @@ const PRECACHE = [
   './js/app.js?' + APPV,
   './icons/icon-192.png',
   './icons/icon-512.png',
-  // 内协「待发」标签图标：URL 必须与 app.js 里 ICON_IBOX 的 src/srcset 逐字一致，否则会重复下载两份
-  './icons/intl-box.png',
-  './icons/intl-box@2x.png'
+  // 内协「待发」标签图标：带 APPV 参数，改图后URL 变化自然 miss 旧缓存。
+  // URL 必须与 app.js 里 ICON_IBOX 的 src/srcset 逐字一致，否则会重复下载两份。
+  './icons/intl-box.png?' + APPV,
+  './icons/intl-box@2x.png?' + APPV
 ];
 
 self.addEventListener('install', (event) => {

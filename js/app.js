@@ -361,8 +361,8 @@
   // 内协单：客户为内部分公司/协作客户，且订单尚未登记内协单号 → 待发
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
-  // CSS .ibox 控制尺寸（整数 px，小尺寸不糊），@2x 图供高 DPI 屏。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png" srcset="icons/intl-box@2x.png 2x" alt="" width="14" height="14">';
+  // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v591" srcset="icons/intl-box@2x.png?v591 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
