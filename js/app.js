@@ -359,6 +359,14 @@
   function riskInfo(o) { return riskMap()[o.id] || { level: 'none', reason: '' }; }
   function isFinishedStatus(s) { return s === '已定稿' || s === '已换人' || s === '已取消'; }
   // 内协单：客户为内部分公司/协作客户，且订单尚未登记内协单号 → 待发
+  // 「待发」图标：内联 SVG 蓝色包裹箱（不用 emoji，各平台/微信内置浏览器渲染一致）
+  const ICON_IBOX = '<svg class="ibox" viewBox="0 0 32 32" aria-hidden="true" focusable="false">'
+    + '<path d="M2.2 4.9 9 1.9h15.3l5.5 3z" fill="#63B0FF"/>'
+    + '<path d="M22.2 4.6 29 8.2v15.6l-6.8 3.6z" fill="#4DA3FF"/>'
+    + '<rect x="1.6" y="4.6" width="21.6" height="23" rx="4.2" fill="#0A6CD1"/>'
+    + '<rect x="6.5" y="11.3" width="11.8" height="11.4" rx="1.8" fill="none" stroke="#fff" stroke-width="2.1"/>'
+    + '<path d="M7 11.9 12.4 17.2 17.8 11.9" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'
+    + '</svg>';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -376,7 +384,7 @@
     }
     const pending = isInternalPending(o);
     return pending
-      ? '<span class="internal-tag pending" title="内部分公司/协作客户订单：尚未登记内协单号">🔶 内协单待发</span>'
+      ? '<span class="internal-tag pending" title="内部分公司/协作客户订单：尚未登记内协单号">' + ICON_IBOX + ' 内协单待发</span>'
       : '<span class="internal-tag done" title="内协单号：' + esc(o.internal_order_no || '') + '">✅ 已发内协单</span>';
   }
   // 内协单号自动生成（NX-YYYYMMDD-NNN）
@@ -398,8 +406,12 @@
       '<div class="modal" style="max-width:400px">' +
         '<div class="modal-body" style="padding:18px 16px">' +
           '<div style="font-size:14px;font-weight:600;margin-bottom:4px">内协单登记 · ' + esc(o.order_no || '') + '</div>' +
-          '<div class="muted" style="font-size:12px;margin-bottom:10px">' + esc(o.title || '') + ' · ' + esc(o.customer_name || '') +
-            (cur ? ' · 当前单号：' + esc(cur) : ' · 尚未登记，填写即视为已发') + '</div>' +
+          '<div class="muted" style="font-size:12px;margin-bottom:10px">' + esc(o.title || '') + ' · ' + esc(o.customer_name || '') + '</div>' +
+          '<div class="muted" style="font-size:12px;margin-bottom:10px">' +
+            (cur
+              ? '当前单号：' + esc(cur) + '，可修改后重新登记。'
+              : '内协单号已自动生成，确认或修改后点「标记已发」') +
+          '</div>' +
           '<input id="wbInternalNo" type="text" autocomplete="off" spellcheck="false" value="' + esc(cur || genInternalNo()) + '" ' +
             'style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:transparent" ' +
             'placeholder="如：NX-2026-001">' +
@@ -3546,7 +3558,7 @@
       return '<tr data-id="' + o.id + '"' + rowCls + '">' +
         '<td title="' + esc(o.order_no || '') + '">' + esc(o.order_no || '') + '</td>' +
         '<td title="' + esc(o.title || '') + '">' + esc(o.title) + (o.notes ? ' <span title="' + esc(o.notes) + '">📝</span>' : '') + '</td>' +
-        '<td title="' + esc(o.customer_name || '') + '">' + esc(o.customer_name || '') + (isInternalPending(o) ? ' <span class="internal-tag pending clickable" data-internal-mark="' + esc(o.id) + '" title="点击登记内协单号，标记已发">🔶待发</span>' : '') + '</td>' +
+        '<td title="' + esc(o.customer_name || '') + '">' + esc(o.customer_name || '') + (isInternalPending(o) ? ' <span class="internal-tag pending clickable" data-internal-mark="' + esc(o.id) + '" title="点击登记内协单号，标记已发">' + ICON_IBOX + '待发</span>' : '') + '</td>' +
         '<td>' + esc(o.task_type) + '</td>' +
         '<td class="num">¥' + money(o.amount) + (o.coupon_code ? ' <span class="od-coupon-tag" title="客户已用券：' + esc(o.coupon_code) + '">🎟️</span>' : '') + '</td>' +
         '<td class="center">' + catPill(cat) + (o.complaint_count ? ' <span class="badge bad">投诉' + o.complaint_count + '</span>' : '') + '</td>' +
@@ -3789,7 +3801,7 @@
       if (c.phone && !parts.some(p => p.includes(esc(c.phone)))) parts.push('<span class="cust-detail">📞 ' + esc(c.phone) + '</span>');
       if (c.address) parts.push('<span class="cust-detail">📍 ' + esc(c.address) + '</span>');
       if (c.tag) parts.push('<span class="cust-tag">' + esc(c.tag) + '</span>');
-      if (c.is_internal) parts.push('<span class="cust-tag internal-cust" title="内部分公司 / 内部协作客户：订单需发内协单">🔶 内协客户</span>');
+      if (c.is_internal) parts.push('<span class="cust-tag internal-cust" title="内部分公司 / 内部协作客户：订单需发内协单">' + ICON_IBOX + ' 内协客户</span>');
       return '<span class="cust-line">' + parts.join('') + '</span>';
     }
     const parts = [];
@@ -6395,7 +6407,7 @@
                 <div class="wb-meta">
                   <span>${esc(o.order_no || '')}</span>
                   ${riskBadge(o)}
-                  ${internalPending ? '<span class="wb-dl-badge warn clickable" data-internal-mark="' + esc(o.id) + '" title="点击登记内协单号，标记已发">🔶待发</span>' : ''}
+                  ${internalPending ? '<span class="wb-dl-badge warn clickable" data-internal-mark="' + esc(o.id) + '" title="点击登记内协单号，标记已发">' + ICON_IBOX + '待发</span>' : ''}
                 </div>
               </div>
               ${headRight}
