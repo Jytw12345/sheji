@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v591" srcset="icons/intl-box@2x.png?v591 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v592" srcset="icons/intl-box@2x.png?v592 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -1162,7 +1162,7 @@
       '<h3>修改登录密码</h3>'
       + '<div class="mypw-row" style="margin-top:4px">'
         + '<div class="field" style="flex:1;min-width:160px"><label>当前密码</label><input type="password" id="myPwOld" autocomplete="current-password" placeholder="请输入当前密码" /></div>'
-        + '<div class="field" style="flex:1;min-width:160px"><label>新密码（8 位以上，含大小写+数字+特殊字符）</label><input type="password" id="myPwNew" autocomplete="new-password" placeholder="请输入新密码" /></div>'
+        + '<div class="field" style="flex:1;min-width:160px"><label>新密码</label><input type="password" id="myPwNew" autocomplete="new-password" placeholder="至少 8 位，含大小写字母和数字" /></div>'
         + '<div class="field" style="flex:1;min-width:160px"><label>确认新密码</label><input type="password" id="myPwConfirm" autocomplete="new-password" placeholder="再次输入" /></div>'
       + '</div>'
       + '<div class="pw-strength" id="myPwMeter"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="lbl" id="myPwMeterLbl"></span></div>'
@@ -6753,10 +6753,14 @@
     const html = `
       <button class="close" data-close>×</button>
       <h3>修改密码 · ${esc(d.name)}</h3>
-      <div class="field"><label>新密码（8 位以上，含大小写+数字+特殊字符）</label><input type="password" id="pwNew" autocomplete="new-password" placeholder="请输入新密码" /></div>
+      <div class="field"><label>新密码</label><input type="password" id="pwNew" autocomplete="new-password" placeholder="至少 8 位，含大小写字母和数字" /></div>
       <div class="pw-strength" id="pwMeter"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="lbl" id="pwMeterLbl"></span></div>
-      <div class="field"><label>确认密码</label><input type="password" id="pwConfirm" autocomplete="new-password" placeholder="再次输入" /></div>
-      <label class="tbl-cb" style="margin:8px 0;display:inline-flex"><input type="checkbox" id="pwForce"><span class="box"></span><span style="margin-left:6px">要求该设计师下次登录时修改此密码（强制改密）</span></label>
+      <div class="pw-rules">至少 8 位 · 同时含大写和小写字母 · 含数字</div>
+      <div class="field" style="margin-top:10px"><label>确认密码</label><input type="password" id="pwConfirm" autocomplete="new-password" placeholder="再次输入" /></div>
+      <label class="pw-checkline">
+<input type="checkbox" id="pwForce">
+        <span class="pw-checkline-txt">要求该设计师下次登录时修改此密码（强制改密）</span>
+      </label>
       <div class="login-err" id="pwErr"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px">
         <button class="btn secondary" data-close>取消</button>
@@ -7787,12 +7791,12 @@
   // ───────────────────────────────────────────────────────────
   // 密码强度校验（公网部署：必须足够安全）
   // ───────────────────────────────────────────────────────────
-  // 常见弱密码（小写比对），命中则直接拒绝
+  // 常见弱密码（小写比对），命中则直接拒绝。
+  // 只保留纯英文键盘序列类。**不要收录中文拼音类**（zhang123/wang1234 等）——
+  // 「拼音 + 123」是团队最常用的正常密码格式，收进来会造成大面积误拒（实测 Zhang123 被拦）。
   const WEAK_PW = [
-    'password', '12345678', 'qwerty12', 'design123', 'abc12345', 'abc123456',
-    'admin123', 'password1', '11111111', '00000000', 'qwertyui', 'iloveyou',
-    'passw0rd', 'p@ssw0rd', 'qwerty123', 'letmein1', 'zhang123', 'wang1234',
-    'designer1', 'shuji123', 'work1234'
+    'password1', 'passw0rd', 'p@ssw0rd', 'qwertyui', 'iloveyou',
+    'qwerty123', 'letmein1', 'designer1'
   ];
   // 返回强度评分：score 0~4，label 中文等级
   function checkPwStrength(pw) {
@@ -7802,7 +7806,8 @@
     if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
     if (/\d/.test(pw)) score++;
     if (/[^A-Za-z0-9]/.test(pw)) score++;
-    const ok = pw.length >= 8 && /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw);
+    // 合规 = 满 8 位 + 大小写 + 数字（特殊字符不再是必需，只作加分项）
+    const ok = pw.length >= 8 && /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw);
     const labels = ['弱', '弱', '中', '强', '很强'];
     return { score: Math.min(score, 4), label: labels[Math.min(score, 4)], ok };
   }
@@ -7812,7 +7817,6 @@
     if (pw.length < 8) return { ok: false, msg: '密码至少 8 位' };
     if (!/[a-z]/.test(pw) || !/[A-Z]/.test(pw)) return { ok: false, msg: '需同时包含大写和小写字母' };
     if (!/\d/.test(pw)) return { ok: false, msg: '需包含数字' };
-    if (!/[^A-Za-z0-9]/.test(pw)) return { ok: false, msg: '需包含特殊字符（如 !@#$%^&*）' };
     if (oldPw && pw === oldPw) return { ok: false, msg: '新密码不能与当前密码相同' };
     if (WEAK_PW.indexOf((pw || '').toLowerCase()) >= 0) return { ok: false, msg: '该密码过于常见，请换一个更安全的' };
     if (/(.)\1\1/.test(pw)) return { ok: false, msg: '密码不能包含连续重复字符（如 111）' };
@@ -7848,7 +7852,7 @@
           '<h3>修改登录密码</h3>' +
           '<div class="mypw-row" style="margin-top:4px">' +
             '<div class="field" style="flex:1;min-width:160px"><label>当前密码</label><input type="password" id="fpwOld" autocomplete="current-password" placeholder="请输入当前密码" /></div>' +
-            '<div class="field" style="flex:1;min-width:160px"><label>新密码（8 位以上，含大小写+数字+特殊字符）</label><input type="password" id="fpwNew" autocomplete="new-password" placeholder="请输入新密码" /></div>' +
+            '<div class="field" style="flex:1;min-width:160px"><label>新密码</label><input type="password" id="fpwNew" autocomplete="new-password" placeholder="至少 8 位，含大小写字母和数字" /></div>' +
             '<div class="field" style="flex:1;min-width:160px"><label>确认新密码</label><input type="password" id="fpwConfirm" autocomplete="new-password" placeholder="再次输入" /></div>' +
           '</div>' +
           '<div class="pw-strength" id="fpwMeter"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="lbl" id="fpwMeterLbl"></span></div>' +

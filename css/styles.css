@@ -2921,16 +2921,41 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
 }
 
 /* ── 密码强度条（强制改密 / 改密码共用）── */
-.pw-strength { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+/* bar 必须 flex:none：flex:1 的默认 shrink=1 会在标签变长时把色条压扁，
+   且标签被挤到与色条重叠（2026-10-09 实测「要求」二字压在色条上）。 */
+.pw-strength { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+/* 色条用固定宽度 + gap，天然不被标签挤压；不用 flex:1，避免与标签抢空间 */
 .pw-strength .bar {
-  flex: 1; height: 6px; border-radius: 3px; background: #e2e8f0;
+  flex: none; width: 46px; height: 6px; border-radius: 3px; background: #e2e8f0;
   transition: background .2s ease;
 }
 .pw-strength .bar.on0 { background: #ef4444; }
 .pw-strength .bar.on1 { background: #f59e0b; }
 .pw-strength .bar.on2 { background: #eab308; }
 .pw-strength .bar.on3 { background: #22c55e; }
-.pw-strength .lbl { font-size: 12px; color: var(--muted); margin-left: 4px; white-space: nowrap; }
+/* 标签独占剩余空间，不会与色条叠在一起 */
+.pw-strength .lbl {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 2px;
+}
+/* 带说明文字的复选框行。
+   不能复用 .tbl-cb —— 那是表格单元专用样式，固定 width:20px;height:20px，
+   长文案塞进去会被逐字压成 20px 宽的竖条（2026-10-09 实测弹窗内文字挤成一团）。
+   这里显式放开宽度并让文案横向排列。 */
+.pw-checkline {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 10px 0; cursor: pointer; line-height: 1.5;
+}
+.pw-checkline .pw-checkline-txt {
+  flex: 1; min-width: 0; font-size: 13px; color: var(--ink);
+}
+.pw-checkline input { width: 16px; height: 16px; flex: none; margin: 2px 0 0; accent-color: var(--primary); cursor: pointer; }
+/* 规则说明：独立成行的小字，需求改动时只改这一处文案 */
+.pw-rules {
+  margin: 8px 0 0; padding: 7px 10px; border-radius: 8px;
+  background: #f8fafc; border: 1px solid var(--line);
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+}
 
 /* 强制改密横幅（登录门禁弹窗内） */
 .force-pw-banner {
