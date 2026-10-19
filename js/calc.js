@@ -245,6 +245,41 @@ window.Calc = (function () {
     const tt = new Date(t).getTime();
     return tt >= range.start.getTime() && tt <= range.end.getTime();
   }
+
+  /* ============================================================
+   * 统计封账（2026-10-19）
+   * 背景：定稿率/返工率等指标的「分母」按 dispatch_at 落窗锁定，但「分子」判的是
+   *   status / revision_count —— 这些是会随时间变化的字段。于是窗口内已派单、
+   *   却在数月后才定稿的订单，会永远计入本期分母、却在后续才进分子，导致
+   *   「同一个月份过两个月再看，数字不一样」。
+   * 本函数不改任何计算口径，只回答一个问题：本期数字现在还会不会变。
+   *   - pending（统计中）：窗口内仍有未结案订单，随时可能变化
+   *   - sealed（已封账）：窗口内全部结案，数字已稳定
+   * 封账期 sealDays 仅用于宽限期提示：窗口结束 sealDays 天内即使无未结案单，
+   *   也可能因「客户事后追加投诉/换人」等边界操作改变，故仍标记为统计中。
+   * ============================================================ */
+  const SEAL_DAYS_DEFAULT = 15;   // 仅当 settings.seal_days 缺失/非法时的兜底
+  function sealInfo(range, dispatchOrders, sealDays) {
+    const now = Date.now();
+    const endMs = range.end.getTime();
+    const daysAfterEnd = Math.floor((now - endMs) / 86400000);
+    // 宽限期内一律视为未封账（避免刚过窗口就宣布"数字已定"的误判）
+    const withinGrace = daysAfterEnd < sealDays;
+    // 窗口内仍未结案的订单数（已取消不计入——它已从定稿率分母中剔除，不会再变）
+    const pending = dispatchOrders
+      ? dispatchOrders.filter(o => o.status !== '已取消' && !isFinalized(o) && o.status !== '已换人').length
+      : null;
+    const sealed = !withinGrace && pending === 0;
+    return {
+      sealed,
+      withinGrace,
+      daysAfterEnd,
+      sealDays: sealDays,
+      pending,
+      // 距封账还剩几天：仅在未封账时有意义
+      daysToSeal: withinGrace ? Math.max(0, sealDays - daysAfterEnd) : 0
+    };
+  }
   // 峰值并发：扫描该设计师在窗口内「进行区间」的最大重叠数
   function peakConcurrent(orders, range) {
     const events = [];
@@ -505,6 +540,7 @@ window.Calc = (function () {
 
     return {
       range, settings: s,
+      seal: sealInfo(range, dispatchOrders, Number(s.seal_days) || SEAL_DAYS_DEFAULT),
       totals: {
         intakeCount: intakeOrders.length,
         revenue: Math.round(revenue * 100) / 100,

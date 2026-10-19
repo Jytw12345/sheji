@@ -399,7 +399,8 @@ window.DB = (function () {
     'small_order_max','large_order_min','base_perf_salary',
     'team_award_t1','team_award_a1','team_award_t2','team_award_a2',
     'small_order_target','win_start_day','win_end_day','risk_buffer_days',
-    'auto_dispatch','auto_dispatch_minutes','permissions'
+    'auto_dispatch','auto_dispatch_minutes','permissions',
+    'seal_days'
   ];
   async function getSettings() { return Object.assign({}, settings); }
   async function saveSettings(obj) {

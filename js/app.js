@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v592" srcset="icons/intl-box@2x.png?v592 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v594" srcset="icons/intl-box@2x.png?v594 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -7347,8 +7347,18 @@
       const overviewRows = [{ hpt: 32 }, { hpt: 22 }];
 
       // ---------- Sheet2 设计师明细（含工资核算） ----------
-      const designerHead = ['设计师', '角色', '派单量', '定稿率', '一次提案通过率', '初稿定稿率', '平均定稿时间',
-        '设计返工率', '定稿数', '完成率', '当前在制', '峰值并发', '小单有效', '小单达标', '营收',
+      // 表头封账标注：定稿率等列的分子取决于订单「当前状态」，本期未封账时仍会变化。
+      // 导出后脱离界面，必须在表头上留痕，否则同一个月份过几个月数字会变却无从追溯。
+      const xSeal = rep.seal || {};
+      const xSealMark = xSeal.sealed ? '' : '（统计中）';
+      const xSealNote = xSeal.sealed
+        ? '已封账：本期订单已全部结案，数字已固定，可作为考核依据。'
+        : '统计中：定稿率/返工率/平均定稿时间等列的分子取决于订单当前状态，本期还有 '
+          + (xSeal.pending != null ? xSeal.pending : 0) + ' 单未结案，数字仍会变化；建议窗口结束后 '
+          + (xSeal.sealDays || 15) + ' 天再作考核依据。';
+      const designerHead = ['设计师', '角色', '派单量',
+        '定稿率' + xSealMark, '一次提案通过率' + xSealMark, '初稿定稿率' + xSealMark, '平均定稿时间' + xSealMark,
+        '设计返工率' + xSealMark, '定稿数' + xSealMark, '完成率' + xSealMark, '当前在制', '峰值并发', '小单有效', '小单达标', '营收',
         '基础绩效', '绩效系数', '小单提成', '小单扣减', '总绩效'];
       const designerRows = rep.rows.map(r => [
         txt(r.designerName), txt(r.role), num(r.dispatchCount),
@@ -7359,9 +7369,11 @@
         moneyCell(r.basePerf), r.coef != null ? num(r.coef) : txt(''), moneyCell(r.smallBonus), moneyCell(r.smallDeduction), moneyCell(r.totalPerf)
       ]);
       const designerHeadStyled = designerHead.map(h => cell(h, S.label));
-      const designerRowsStyled = [designerHeadStyled].concat(designerRows);
-      const designerCols = [12, 10, 10, 12, 14, 14, 14, 14, 10, 10, 12, 12, 12, 12, 14, 12, 12, 12, 12, 12].map(w => ({ wch: w }));
-      const designerFreeze = { xSplit: 0, ySplit: 1, topLeftCell: 'A2' };
+      // 封账说明紧贴表头下方一行，保证看表第一眼就能看到
+      const designerRowsStyled = [designerHeadStyled, [txtC(xSealNote)].concat(new Array(designerHead.length - 1).fill(txt('')))].concat(designerRows);
+      const designerCols = [12, 10, 10, 14, 16, 16, 16, 16, 12, 12, 12, 12, 12, 12, 14, 12, 12, 12, 12, 12].map(w => ({ wch: w }));
+      // 冻结前2行：表头 + 封账说明行（新增说明行后 ySplit 需同步 +1）
+      const designerFreeze = { xSplit: 0, ySplit: 2, topLeftCell: 'A3' };
 
       // ---------- Sheet3 项目明细 ----------
       const orderHead = ['单号', '项目', '客户', '任务类型', '金额', '状态', '参与设计师',
@@ -7428,7 +7440,9 @@
           ['人均小单', t.teamAvgSmall, '参与平均的设计师均值']
         ];
         downloadAOA(overviewCSV, fnBase + '_总览.csv');
-        setTimeout(() => downloadAOA([designerHead].concat(designerRows.map(r => r.map(c => c && c.v != null ? c.v : c ?? ''))), fnBase + '_设计师.csv'), 300);
+        // CSV 降级：表头 + 封账说明行一并写入（与 xlsx 分支保持一致）
+        const csvSealRow = [xSealNote].concat(new Array(designerHead.length - 1).fill(''));
+        setTimeout(() => downloadAOA([designerHead, csvSealRow].concat(designerRows.map(r => r.map(c => c && c.v != null ? c.v : c ?? ''))), fnBase + '_设计师.csv'), 300);
         setTimeout(() => downloadAOA([orderHead].concat(orderRows.map(r => r.map(c => c && c.v != null ? c.v : c ?? ''))), fnBase + '_项目.csv'), 600);
         toast('已导出 CSV（XLSX 不可用，已拆分为三个 CSV）');
       }
@@ -7501,6 +7515,7 @@
     $('#sTa1').value = v('team_award_t1', 40000); $('#sAa1').value = v('team_award_a1', 300);
     $('#sTa2').value = v('team_award_t2', 50000); $('#sAa2').value = v('team_award_a2', 500);
     $('#sTarget').value = v('small_order_target', 3);
+    $('#sSealDays').value = v('seal_days', 15);
     $('#sWinStart').value = v('win_start_day', 26);
     $('#sWinEnd').value = v('win_end_day', 25);
     $('#sRiskBuf').value = v('risk_buffer_days', 1.5);
@@ -7727,6 +7742,7 @@
         collab_share_default: (() => { const x = Number($('#sCollabShare').value); return (isFinite(x) && x >= 0 && x <= 1) ? x : 0.3; })(),
         team_award_t2: num('#sTa2'), team_award_a2: num('#sAa2'),
         small_order_target: num('#sTarget') || 3,
+        seal_days: (() => { const v = Number($('#sSealDays').value); return (isFinite(v) && v >= 1 && v <= 365) ? Math.round(v) : 15; })(),
         win_start_day: clampDay('#sWinStart', 26), win_end_day: clampDay('#sWinEnd', 25),
         risk_buffer_days: riskBuffer,
         auto_dispatch: $('#sAutoDispatch').checked,
@@ -7939,6 +7955,26 @@
     const periodLabel = mode === 'custom' ? '自定义' : (mode === 'previous' ? '上期' : '本期');
     $('#anaWindow').textContent = periodLabel + ' ' + fmtTime(win.start).slice(0, 10) + ' ~ ' + fmtTime(win.end).slice(0, 10);
 
+    // 统计封账提示：分母按派单时间锁定，但定稿率/返工率的分子取决于订单「当前状态」，
+    // 窗口内已派单却未结案的订单会在后续月份陆续进分子 —— 同一月份的数字过几个月会变。
+    // 这里明确告知本期是否已封账，避免把「统计中」的数字当成最终考核依据。
+    const seal = rep.seal || {};
+    const sealNote = $('#anaSealNote');
+    if (sealNote) {
+      if (seal.sealed) {
+        sealNote.innerHTML = '<span class="seal-badge sealed">已封账</span>'
+          + '<span class="seal-txt">本期订单已全部结案，数字已固定，可作为考核依据。</span>';
+        sealNote.classList.remove('pending'); sealNote.classList.add('ok');
+      } else {
+        const bits = [];
+        if (seal.pending != null && seal.pending > 0) bits.push('还有 <b>' + seal.pending + '</b> 单未结案，定稿率等指标仍会变化');
+        if (seal.withinGrace && seal.daysToSeal > 0) bits.push('窗口结束后 ' + seal.daysToSeal + ' 天宽限期');
+        sealNote.innerHTML = '<span class="seal-badge pending">统计中</span>'
+          + '<span class="seal-txt">' + (bits.length ? bits.join('，') + '。' : '数据可能随订单推进变化') + '建议窗口结束后 ' + seal.sealDays + ' 天再作考核依据。</span>';
+        sealNote.classList.remove('ok'); sealNote.classList.add('pending');
+      }
+    }
+
     const finalizeRateTeam = t.effectiveDispatch ? t.finalizedCount / t.effectiveDispatch : 0;
     const kpi = (label, value, hint, icon, accent) =>
       '<div class="kpi" data-accent="' + (accent || '#6366f1') + '">' +
@@ -8008,12 +8044,13 @@
       '<th title="设计师姓名">设计师</th>' +
       '<th title="设计师角色">角色</th>' +
       '<th title="窗口内参与订单数">派单量</th>' +
-      '<th title="定稿单数 ÷ 派单总数">定稿率</th>' +
-      '<th title="一次提案通过率">一次提案<br>通过率</th>' +
-      '<th title="初稿定稿率">初稿<br>定稿率</th>' +
-      '<th title="平均定稿时间（天/小时/分钟自适应）">平均定稿<br>时间</th>' +
-      '<th title="设计返工率">设计<br>返工率</th>' +
-      '<th title="已定稿单数">定稿数</th>' +
+      // 以下几列的分子取决于订单「当前状态」，窗口未封账时会随时间变化
+      '<th title="定稿单数 ÷ 派单总数。分子随订单定稿而增加，本期未封账时此值仍会变化">' + (seal.sealed ? '' : '<i class="th-warn">*</i>') + '定稿率</th>' +
+      '<th title="一次提案通过率。分子随提案结论而变化，本期未封账时此值仍会变化">' + (seal.sealed ? '' : '<i class="th-warn">*</i>') + '一次提案<br>通过率</th>' +
+      '<th title="初稿定稿率。分子随订单定稿而增加，本期未封账时此值仍会变化">' + (seal.sealed ? '' : '<i class="th-warn">*</i>') + '初稿<br>定稿率</th>' +
+      '<th title="平均定稿时间（天/小时/分钟自适应）。随更多订单定稿而变化，本期未封账时此值仍会变化">' + (seal.sealed ? '' : '<i class="th-warn">*</i>') + '平均定稿<br>时间</th>' +
+      '<th title="设计返工率。分子随 revision_count 增加而变化，本期未封账时此值仍会变化">' + (seal.sealed ? '' : '<i class="th-warn">*</i>') + '设计<br>返工率</th>' +
+      '<th title="已定稿单数。随订单定稿而增加，本期未封账时此值仍会变化">' + (seal.sealed ? '' : '<i class="th-warn">*</i>') + '定稿数</th>' +
       '<th title="完成率">完成率</th>' +
       '<th title="小单达标情况">小单<br>(达标)</th>' +
       '<th title="窗口内营收（主负责）">营收</th>' +

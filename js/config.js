@@ -150,6 +150,7 @@ window.Cfg = (function () {
     team_award_t1: 40000, team_award_a1: 300,
     team_award_t2: 50000, team_award_a2: 500,
     small_order_target: 3,   // 小单奖励达标线：每人平均不少于 3 单
+    seal_days: 15,            // 统计封账宽限期（天）：窗口结束后该天数内仍视为「统计中」
     win_start_day: 26,        // 考核窗口起始日（每月该日，取上月）
     win_end_day: 25,           // 考核窗口结束日（每月该日，取本月）
     auto_dispatch: true,      // 自动派单：新建订单时若已指定设计师+截稿时间，自动推进到「派单」
