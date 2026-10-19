@@ -13,6 +13,7 @@ window.DB = (function () {
   let settings = Object.assign({}, window.Cfg.DEFAULT_SETTINGS);
   const cache = { designers: [], groups: [], customers: [], orders: [] };
   const listeners = new Set();
+  let knownSettingsCols = null;   // 数据库 settings 表真实存在的列（每次 select('*') 后回填）；null 表示尚未探明
   // 乐观更新防护：避免云端复制延迟把本端刚做的删除/修改被旧数据覆盖
   const pendingDeleteIds = new Set();
   const recentSaves = new Map();
@@ -228,7 +229,7 @@ window.DB = (function () {
     cache.groups = mergeServer('groups', groups && groups.data);
     cache.customers = mergeServer('customers', customers && customers.data);
     cache.orders = mergeServer('orders', orders && orders.data);
-    if (st && st.data) { settings = Object.assign({}, settings, st.data); persistSettings(); }
+    if (st && st.data) { settings = Object.assign({}, settings, st.data); rememberSettingsCols(st.data); persistSettings(); }
     markSynced();   // 【v441】一次完整拉取即一次同步：更新同步时钟（realtime 路径还会再 emit 一次，无害）
   }
 
@@ -402,17 +403,48 @@ window.DB = (function () {
     'auto_dispatch','auto_dispatch_minutes','permissions',
     'seal_days'
   ];
+  // 记录数据库 settings 表真实存在的列：每次成功 select('*') 后调用。
+  // 用于 saveSettings 跳过「数据库尚未加列」的字段，避免整条 upsert 因缺列 400 失败、
+  // 连带其他参数也保存不进去（典型场景：新增 seal_days 后忘了跑迁移 SQL）。
+  function rememberSettingsCols(data) {
+    if (data && typeof data === 'object') {
+      const keys = Object.keys(data);
+      if (keys.length) knownSettingsCols = keys;
+    }
+  }
   async function getSettings() { return Object.assign({}, settings); }
   async function saveSettings(obj) {
     settings = Object.assign({}, settings, obj);
     persistSettings();   // 立即落盘，保证下次登录/刷新可即时用上最新权限配置
     const payload = { id: 1 };
+    const skipped = [];  // 因数据库缺少对应列而未保存的字段（需先跑迁移 SQL）
     for (const k of SETTINGS_COLS) {
-      if (k in obj) payload[k] = obj[k];   // 只写调用方显式传入的字段
+      if (!(k in obj)) continue;                 // 调用方未传，不写
+      // 已知数据库列集合后，跳过其中不存在的列：避免整条 upsert 因缺列 400 失败
+      if (knownSettingsCols && !knownSettingsCols.includes(k)) { skipped.push(k); continue; }
+      payload[k] = obj[k];                        // 只写调用方显式传入且数据库存在的字段
     }
-    const { error } = await sb.from('settings').upsert(payload, { onConflict: 'id' });
-    if (error) throw error;
+    // 若除 id 外没有可写字段（全是未知列），不发起无意义的 upsert
+    if (Object.keys(payload).length > 1) {
+      const { error } = await sb.from('settings').upsert(payload, { onConflict: 'id' });
+      if (error) {
+        // 兜底：即便 knownSettingsCols 探明不全，upsert 仍报缺列，则剥离疑似缺列字段重试一次
+        if (String(error.message || '').includes('column') || String(error.code || '') === 'PGRST204') {
+          for (const k of Object.keys(payload)) {
+            if (k === 'id') continue;
+            delete payload[k]; skipped.push(k);
+          }
+          if (Object.keys(payload).length > 1) {
+            const r2 = await sb.from('settings').upsert(payload, { onConflict: 'id' });
+            if (r2.error) throw r2.error;
+          }
+        } else {
+          throw error;
+        }
+      }
+    }
     emit();
+    return { skipped };
   }
   // 单独补拉 settings：登录瞬间会话刚建立，PostgREST 偶发尚未识别身份，
   // 导致 loadAll 里的 settings 查询返回 {data:null, error}（非抛错，safe 捕获不到），
@@ -423,7 +455,7 @@ window.DB = (function () {
       try {
         const { data, error } = await sb.from('settings').select('*').eq('id', 1).maybeSingle();
         if (error) { console.warn('[settings] 补拉失败：', error.message); return settings; }
-        if (data) { settings = Object.assign({}, settings, data); persistSettings(); }
+        if (data) { settings = Object.assign({}, settings, data); rememberSettingsCols(data); persistSettings(); }
         return settings;
       } catch (e) { console.warn('[settings] 补拉异常：', e && e.message); return settings; }
     });
@@ -451,6 +483,7 @@ window.DB = (function () {
         const { data, error } = await sb.from('settings').select('*').eq('id', 1).maybeSingle();
         if (!error && data) {
           settings = Object.assign({}, settings, data);
+          rememberSettingsCols(data);
           persistSettings();
           if (data.permissions) return settings;   // 拿到真实权限，立即返回
         } else if (error) {

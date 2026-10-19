@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v594" srcset="icons/intl-box@2x.png?v594 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v595" srcset="icons/intl-box@2x.png?v595 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -7736,7 +7736,7 @@
       const clampDay = (id, fb) => { const v = Number($(id).value); return (v >= 1 && v <= 31) ? v : fb; };
       const bufVal = Number($('#sRiskBuf').value);
       const riskBuffer = (bufVal >= 0 && !isNaN(bufVal)) ? bufVal : 1.5;
-      await DB.saveSettings({
+      const saveRes = await DB.saveSettings({
         small_order_max: num('#sSmallMax'), large_order_min: num('#sLargeMin'),
         base_perf_salary: num('#sBase'), team_award_t1: num('#sTa1'), team_award_a1: num('#sAa1'),
         collab_share_default: (() => { const x = Number($('#sCollabShare').value); return (isFinite(x) && x >= 0 && x <= 1) ? x : 0.3; })(),
@@ -7751,7 +7751,13 @@
         default_deadline_days: (Number($('#sDefaultDeadlineDays').value) >= 0 && Number($('#sDefaultDeadlineDays').value) <= 365) ? Number($('#sDefaultDeadlineDays').value) : 1
       });
       logOp('保存参数', '设置');
-      toast('参数已保存'); await refreshAll();
+      let msg = '参数已保存';
+      // 数据库缺列导致部分字段未落库：非阻断警告（提示先跑迁移 SQL），其余字段已正常保存
+      if (saveRes && saveRes.skipped && saveRes.skipped.length) {
+        console.warn('[saveParams] 以下字段因数据库缺少对应列未保存：', saveRes.skipped);
+        msg += '；部分项（' + saveRes.skipped.join('、') + '）因数据库缺列未保存，请先运行迁移 SQL';
+      }
+      toast(msg); await refreshAll();
     } finally { unlockOp('saveParams'); }
   }
   async function exportAll() {
