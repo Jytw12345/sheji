@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v598" srcset="icons/intl-box@2x.png?v598 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v603" srcset="icons/intl-box@2x.png?v603 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -3263,6 +3263,8 @@
     $('#btnNewCustomer').addEventListener('click', newCustomer);
     // 经营分析导出
     $('#btnAnaCSV').addEventListener('click', exportAnaCSV);
+    $('#anaDesignerFilter').addEventListener('change', renderAnalytics);
+    const btnDashPerfCSV = $('#btnDashPerfCSV'); if (btnDashPerfCSV) btnDashPerfCSV.addEventListener('click', exportDashCSV);
     // 设置
     $('#btnSaveParams').addEventListener('click', saveParams);
     $('#btnExportAll').addEventListener('click', exportAll);
@@ -3461,13 +3463,21 @@
     const td = sum.typeDist, tk = Object.keys(td);
     Charts.doughnut($('#chartType'), { title: '订单类型分布（全部累计）', labels: tk, values: tk.map(k => td[k]), colors: tk.map(k => TYPE_COLOR[k] || '#64748b') });
 
-    // 速览表
+    // 速览表（含个人业绩金额与提成金额，与经营分析同源）
     $('#dashPerfTable').innerHTML =
-      '<thead><tr><th>设计师</th><th>接单</th><th>定稿数</th><th>定稿率</th><th>完成率</th><th>系数</th><th>小单</th></tr></thead><tbody>' +
-      (ds.length ? ds.map(d =>
+      '<thead><tr><th>设计师</th><th>接单</th><th>定稿数</th><th>定稿率</th><th>完成率</th><th>系数</th><th>小单</th>' +
+      '<th title="窗口内营收（按参与人分成）">业绩金额</th>' +
+      '<th title="提成金额 = 总绩效（基础绩效×系数 + 小单提成 − 小单扣减）">提成金额</th></tr></thead><tbody>' +
+      (ds.length ? ds.map((d, i) =>
         '<tr><td>' + esc(d.designerName) + '</td><td>' + d.total + '</td><td>' + d.finalizedCount + '</td><td>' + pct(d.rate) +
-        '</td><td>' + pct(d.completion) + '</td><td>' + d.coef + '</td><td>' + d.smallCount + '</td></tr>'
-      ).join('') : '<tr><td colspan="7" class="empty">暂无数据，请先在“设计师”与“订单”中录入</td></tr>') + '</tbody>';
+        '</td><td>' + pct(d.completion) + '</td><td>' + d.coef + '</td><td>' + d.smallCount +
+        '</td><td class="num">¥' + money(revenue[i] || 0) + '</td><td class="num">¥' + money(d.totalPerf || 0) + '</td></tr>'
+      ).join('') : '<tr><td colspan="9" class="empty">暂无数据，请先在“设计师”与“订单”中录入</td></tr>') + '</tbody>';
+    // 缓存供「导出CSV」复用，避免重复计算
+    state._dashExport = {
+      ds, revenue, win,
+      periodLabel: state.dashboardPeriod === 'previous' ? '上期' : '本期'
+    };
     applyPermissions();
   }
   async function teamAwardNow(sum) {
@@ -7294,6 +7304,8 @@
       const rangeText = fmtTime(rep.range.start).slice(0, 10) + ' ~ ' + fmtTime(rep.range.end).slice(0, 10);
       const fnBase = '经营分析_' + fmtTime(rep.range.start).slice(0, 10) + '_' + fmtTime(rep.range.end).slice(0, 10);
       const n = v => Number(v) || 0;
+      // 把比率/小数四舍五入到 4 位，避免像 0.9807692307692307 这种超长小数写入 Excel
+      const r4 = x => { const v = Number(x); return isFinite(v) ? Math.round(v * 10000) / 10000 : 0; };
 
       // ---------- Excel 样式（xlsx 库支持时生效；不支持则静默忽略） ----------
       const C_TITLE = '1F2937', C_SUB = '6B7280', C_HEAD = 'FFFFFF', C_HEAD_BG = '4F46E5',
@@ -7309,6 +7321,12 @@
         num: { numFmt: '#,##0', alignment: { horizontal: 'right', vertical: 'center' } },
         money: { numFmt: '¥#,##0.00', alignment: { horizontal: 'right', vertical: 'center' } },
         pct: { numFmt: '0.0%', alignment: { horizontal: 'right', vertical: 'center' } },
+        // 总览数值列专用：居中对齐（设计师明细仍用右对齐便于比对）
+        numC: { numFmt: '#,##0', alignment: { horizontal: 'center', vertical: 'center' } },
+        moneyC: { numFmt: '¥#,##0.00', alignment: { horizontal: 'center', vertical: 'center' } },
+        pctC: { numFmt: '0.0%', alignment: { horizontal: 'center', vertical: 'center' } },
+        // 绩效系数：保留 2 位小数（原 #,##0 会取整成 1，丢失 1.33 这类系数）
+        num2: { numFmt: '#,##0.00', alignment: { horizontal: 'right', vertical: 'center' } },
         muted: { font: { color: { rgb: C_MUTED } }, alignment: { horizontal: 'left', vertical: 'center' } },
         cycle: { alignment: { horizontal: 'left', vertical: 'center' } }
       };
@@ -7328,27 +7346,27 @@
         [cell(period, S.subtitle), cell(rangeText, S.subtitle), null],
         [],
         [cell('KPI', S.section), cell('数值', S.section), cell('说明', S.section)],
-        [txt('总接单量'), num(t.intakeCount), muted('范围内接单总数')],
-        [txt('规定时间总营收'), moneyCell(t.revenue), muted('范围内全部单子金额合计')],
-        [txt('客户投诉笔数'), num(t.complaints), muted('范围内投诉合计')],
-        [txt('派单订单数'), num(t.dispatchOrders), muted('范围内派发（唯一单）')],
+        [txt('总接单量'), numC(r4(t.intakeCount)), muted('范围内接单总数')],
+        [txt('规定时间总营收'), moneyC(r4(t.revenue)), muted('范围内全部单子金额合计')],
+        [txt('客户投诉笔数'), numC(r4(t.complaints)), muted('范围内投诉合计')],
+        [txt('派单订单数'), numC(r4(t.dispatchOrders)), muted('范围内派发（唯一单）')],
         [txt('平均定稿时间'), txt(t.avgCycleTeam ? fmtCycle(t.avgCycleTeam) : '—'), muted('派单→定稿均值')],
-        [txt('提案通过率'), pctCell(t.proposalPassRate), muted('提案通过 ÷ 已决提案')],
-        [txt('一次提案通过率'), pctCell(t.firstProposalPassRate), muted('首次提案一次过 ÷ 已决提案')],
-        [txt('初稿定稿率'), pctCell(t.draftToFinalizeRate), muted('已定稿且修改 0 次')],
-        [txt('定稿率'), pctCell(t.effectiveDispatch ? t.finalizedCount / t.effectiveDispatch : 0), muted('定稿 ÷ (派单−客户取消)')],
-        [txt('设计返工率'), pctCell(t.reworkRate), muted('有修改 ÷ 已定稿')],
-        [txt('当前在制'), num(t.currentInProgress), muted('全组实时未结案')],
-        [txt('峰值并发(单人最高)'), num(t.peakConcurrency), muted('范围内单人同时最多')],
+        [txt('提案通过率'), pctC(r4(t.proposalPassRate)), muted('提案通过 ÷ 已决提案')],
+        [txt('一次提案通过率'), pctC(r4(t.firstProposalPassRate)), muted('首次提案一次过 ÷ 已决提案')],
+        [txt('初稿定稿率'), pctC(r4(t.draftToFinalizeRate)), muted('已定稿且修改 0 次')],
+        [txt('定稿率'), pctC(r4(t.effectiveDispatch ? t.finalizedCount / t.effectiveDispatch : 0)), muted('定稿 ÷ (派单−客户取消)')],
+        [txt('设计返工率'), pctC(r4(t.reworkRate)), muted('有修改 ÷ 已定稿')],
+        [txt('当前在制'), numC(r4(t.currentInProgress)), muted('全组实时未结案')],
+        [txt('峰值并发(单人最高)'), numC(r4(t.peakConcurrency)), muted('范围内单人同时最多')],
         [txt('小单达标'), txt(sm.smallOkCount + '/' + sm.designerCount + ' 人'), muted('≥' + sm.target + '单/人 · 人均 ' + sm.avgSmallTeam)],
-        [txt('已取消订单数'), num(t.cancelCount), muted('范围内客户中途终止')],
-        [txt('客户取消率'), pctCell(t.cancelRate), muted('已取消 ÷ (已取消+已定稿+已换人)')],
+        [txt('已取消订单数'), numC(r4(t.cancelCount)), muted('范围内客户中途终止')],
+        [txt('客户取消率'), pctC(r4(t.cancelRate)), muted('已取消 ÷ (已取消+已定稿+已换人)')],
         [],
         [cell('工资核算（团队）', S.section), cell('数值', S.section), cell('说明', S.section)],
-        [txt('团队营收'), moneyCell(t.teamRevenue), muted('范围内全部单子金额合计')],
-        [txt('团队奖'), moneyCell(t.teamAward), muted('')],
-        [txt('绩效合计'), moneyCell(t.totalPerfSum), muted('所有设计师总绩效')],
-        [txt('人均小单'), num(t.teamAvgSmall), muted('参与平均的设计师均值')]
+        [txt('团队营收'), moneyC(r4(t.teamRevenue)), muted('范围内全部单子金额合计')],
+        [txt('团队奖'), moneyC(r4(t.teamAward)), muted('')],
+        [txt('绩效合计'), moneyC(r4(t.totalPerfSum)), muted('所有设计师总绩效')],
+        [txt('人均小单'), numC(r4(t.teamAvgSmall)), muted('参与平均的设计师均值')]
       ];
       const overviewMerges = [
         { s: { r: 0, c: 0 }, e: { r: 0, c: 2 } },
@@ -7369,15 +7387,15 @@
           + (xSeal.sealDays || 15) + ' 天再作考核依据。';
       const designerHead = ['设计师', '角色', '派单量',
         '定稿率' + xSealMark, '一次提案通过率' + xSealMark, '初稿定稿率' + xSealMark, '平均定稿时间' + xSealMark,
-        '设计返工率' + xSealMark, '定稿数' + xSealMark, '完成率' + xSealMark, '当前在制', '峰值并发', '小单有效', '小单达标', '营收',
-        '基础绩效', '绩效系数', '小单提成', '小单扣减', '总绩效'];
+        '设计返工率' + xSealMark, '定稿数' + xSealMark, '完成率' + xSealMark, '当前在制', '峰值并发', '小单有效', '小单达标', '业绩金额',
+        '基础绩效', '绩效系数', '小单提成', '小单扣减', '提成金额'];
       const designerRows = rep.rows.map(r => [
         txt(r.designerName), txt(r.role), num(r.dispatchCount),
-        pctCell(r.finalizeRate), pctCell(r.firstProposalPassRate), pctCell(r.draftToFinalizeRate),
-        cycle(r.avgCycle ? fmtCycle(r.avgCycle) : '—'), pctCell(r.reworkRate),
-        num(r.finalizedCount), pctCell(r.completion), num(r.currentLoad), num(r.peakLoad),
-        num(r.smallCount), txtC(r.smallOk ? '达标' : '未达标'), moneyCell(r.revenue),
-        moneyCell(r.basePerf), r.coef != null ? num(r.coef) : txt(''), moneyCell(r.smallBonus), moneyCell(r.smallDeduction), moneyCell(r.totalPerf)
+        pctCell(r4(r.finalizeRate)), pctCell(r4(r.firstProposalPassRate)), pctCell(r4(r.draftToFinalizeRate)),
+        cycle(r.avgCycle ? fmtCycle(r.avgCycle) : '—'), pctCell(r4(r.reworkRate)),
+        num(r.finalizedCount), pctCell(r4(r.completion)), num(r.currentLoad), num(r.peakLoad),
+        num(r.smallCount), txtC(r.smallOk ? '达标' : '未达标'), moneyCell(r4(r.revenue)),
+        moneyCell(r4(r.basePerf)), r.coef != null ? num2(r.coef) : txt(''), moneyCell(r4(r.smallBonus)), moneyCell(r4(r.smallDeduction)), moneyCell(r4(r.totalPerf))
       ]);
       const designerHeadStyled = designerHead.map(h => cell(h, S.label));
       // 封账说明紧贴表头下方一行，保证看表第一眼就能看到
@@ -7418,6 +7436,8 @@
         const wsOrder = window.XLSX.utils.aoa_to_sheet(orderRowsStyled);
         wsOrder['!cols'] = orderCols;
         wsOrder['!freeze'] = orderFreeze;
+        // 自动筛选：表头下拉可「按参与设计师」等任意列筛选（15 列 = A~O）
+        if (orderRows.length) wsOrder['!autofilter'] = { ref: 'A1:O' + (orderRows.length + 1) };
         window.XLSX.utils.book_append_sheet(wb, wsOrder, '项目明细');
 
         window.XLSX.writeFile(wb, fnBase + '.xlsx', { cellStyles: true });
@@ -7451,10 +7471,20 @@
           ['人均小单', t.teamAvgSmall, '参与平均的设计师均值']
         ];
         downloadAOA(overviewCSV, fnBase + '_总览.csv');
+        // CSV 降级：照单元格样式把比率/金额/系数转成可读文本（否则会导成 0.9808 这类原始比率）
+        const fmtCSV = c => {
+          if (c && c.v != null) {
+            if (c.s === S.pct || c.s === S.pctC) return (Number(c.v) * 100).toFixed(1) + '%';
+            if (c.s === S.money || c.s === S.moneyC) return '¥' + Number(c.v).toFixed(2);
+            if (c.s === S.num2) return Number(c.v).toFixed(2);
+            return c.v;
+          }
+          return c ?? '';
+        };
         // CSV 降级：表头 + 封账说明行一并写入（与 xlsx 分支保持一致）
         const csvSealRow = [xSealNote].concat(new Array(designerHead.length - 1).fill(''));
-        setTimeout(() => downloadAOA([designerHead, csvSealRow].concat(designerRows.map(r => r.map(c => c && c.v != null ? c.v : c ?? ''))), fnBase + '_设计师.csv'), 300);
-        setTimeout(() => downloadAOA([orderHead].concat(orderRows.map(r => r.map(c => c && c.v != null ? c.v : c ?? ''))), fnBase + '_项目.csv'), 600);
+        setTimeout(() => downloadAOA([designerHead, csvSealRow].concat(designerRows.map(r => r.map(fmtCSV))), fnBase + '_设计师.csv'), 300);
+        setTimeout(() => downloadAOA([orderHead].concat(orderRows.map(r => r.map(fmtCSV))), fnBase + '_项目.csv'), 600);
         toast('已导出 CSV（XLSX 不可用，已拆分为三个 CSV）');
       }
     } finally {
@@ -7466,6 +7496,24 @@
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  }
+  // 仪表盘「本月绩效速览」导出 CSV（含业绩金额/提成金额）
+  async function exportDashCSV() {
+    if (!lockOp('exportDash')) return;
+    try {
+      if (!state._dashExport) await renderDashboard();
+      const ex = state._dashExport;
+      if (!ex || !ex.ds || !ex.ds.length) { toast('暂无可导出的数据'); return; }
+      const aoa = [['设计师', '接单', '定稿数', '定稿率', '完成率', '系数', '小单', '业绩金额', '提成金额']];
+      ex.ds.forEach((d, i) => aoa.push([
+        d.designerName, d.total, d.finalizedCount, pct(d.rate), pct(d.completion), d.coef, d.smallCount,
+        Math.round((ex.revenue[i] || 0) * 100) / 100, Math.round((d.totalPerf || 0) * 100) / 100
+      ]));
+      const fn = ex.periodLabel + '绩效速览_' + fmtTime(ex.win.start).slice(0, 10) + '_' + fmtTime(ex.win.end).slice(0, 10) + '.csv';
+      downloadAOA(aoa, fn);
+      toast('已导出 仪表盘绩效速览 CSV');
+    } catch (e) { console.error(e); toast('导出失败：' + (e && e.message || e)); }
+    finally { unlockOp('exportDash'); }
   }
   async function exportOrdersCSV() {
     await ensureXlsxLib(); // 确保 XLSX 可用，否则导出降级为 CSV
@@ -7981,14 +8029,17 @@
       if (seal.sealed) {
         sealNote.innerHTML = '<span class="seal-badge sealed">已封账</span>'
           + '<span class="seal-txt">本期订单已全部结案，数字已固定，可作为考核依据。</span>';
-        sealNote.classList.remove('pending'); sealNote.classList.add('ok');
+        sealNote.classList.remove('pending', 'warn'); sealNote.classList.add('ok');
+      } else if (!seal.withinGrace && seal.pending > 0) {
+        // 已超宽限期但仍有未结案单：最该警惕的状态，单独标红橙
+        sealNote.innerHTML = '<span class="seal-badge warn">待结案 ' + seal.pending + ' 单</span>'
+          + '<span class="seal-txt">已超 ' + seal.sealDays + ' 天宽限期，仍有 <b>' + seal.pending + '</b> 单未结案，定稿率/业绩等指标仍会变化，暂不可作考核依据。</span>';
+        sealNote.classList.remove('ok', 'pending'); sealNote.classList.add('warn');
       } else {
-        const bits = [];
-        if (seal.pending != null && seal.pending > 0) bits.push('还有 <b>' + seal.pending + '</b> 单未结案，定稿率等指标仍会变化');
-        if (seal.withinGrace && seal.daysToSeal > 0) bits.push('窗口结束后 ' + seal.daysToSeal + ' 天宽限期');
-        sealNote.innerHTML = '<span class="seal-badge pending">统计中</span>'
-          + '<span class="seal-txt">' + (bits.length ? bits.join('，') + '。' : '数据可能随订单推进变化') + '建议窗口结束后 ' + seal.sealDays + ' 天再作考核依据。</span>';
-        sealNote.classList.remove('ok'); sealNote.classList.add('pending');
+        // 宽限期内：窗口刚结束，给数据沉淀时间
+        sealNote.innerHTML = '<span class="seal-badge pending">封账宽限期内</span>'
+          + '<span class="seal-txt">距封账还剩 <b>' + seal.daysToSeal + '</b> 天（宽限期 ' + seal.sealDays + ' 天），指标可能变化，建议窗口结束后 ' + seal.sealDays + ' 天再作考核依据。</span>';
+        sealNote.classList.remove('ok', 'warn'); sealNote.classList.add('pending');
       }
     }
 
@@ -8021,7 +8072,17 @@
       el.style.setProperty('--kpi-bg', c + '18');
     });
 
-    const rows = rep.rows;
+    let rows = rep.rows;
+    // 设计师筛选下拉（先填全部选项，再据此过滤图表与表格）
+    const fSel = $('#anaDesignerFilter');
+    const fName = fSel ? fSel.value : '';
+    if (fSel) {
+      const prev = fName;
+      fSel.innerHTML = '<option value="">全部设计师</option>' +
+        rows.map(r => '<option value="' + esc(r.designerName) + '">' + esc(r.designerName) + '</option>').join('');
+      if ([...fSel.options].some(o => o.value === prev)) fSel.value = prev; // 保留上次选择
+    }
+    if (fName) rows = rows.filter(r => r.designerName === fName);
     const names = rows.map((r, i) => {
       const raw = r && r.designerName;
       const s = String(raw != null ? raw : '').trim();
@@ -8070,17 +8131,19 @@
       '<th title="已定稿单数。随订单定稿而增加，本期未封账时此值仍会变化">' + (seal.sealed ? '' : '<i class="th-warn">*</i>') + '定稿数</th>' +
       '<th title="完成率">完成率</th>' +
       '<th title="小单达标情况">小单<br>(达标)</th>' +
-      '<th title="窗口内营收（主负责）">营收</th>' +
+      '<th title="窗口内营收（按参与人分成）">业绩<br>金额</th>' +
+      '<th title="提成金额 = 总绩效（基础绩效×系数 + 小单提成 − 小单扣减）">提成<br>金额</th>' +
       '<th title="绩效系数">系数</th>' +
       '</tr></thead><tbody>' +
       (rows.length ? rows.map(r =>
         '<tr><td>' + esc(r.designerName) + '</td><td>' + esc(r.role) + '</td><td>' + r.dispatchCount + '</td>' +
         '<td>' + pct(r.finalizeRate) + '</td><td>' + pct(r.firstProposalPassRate) + '</td><td>' + pct(r.draftToFinalizeRate) + '</td><td>' + (r.avgCycle ? fmtCycle(r.avgCycle) : '—') + '</td><td>' + pct(r.reworkRate) + '</td>' +
         '<td>' + r.finalizedCount + '</td><td>' + pct(r.completion) + '</td>' +
-        '<td>' + r.smallCount + ' <span class="badge ' + (r.smallOk ? 'ok' : 'bad') + '">' + (r.smallOk ? '达标' : '未达标') + '</span></td>' +
+        '<td class="ana-sm"><span class="ana-sm-num">' + r.smallCount + '</span><span class="badge ' + (r.smallOk ? 'ok' : 'bad') + '">' + (r.smallOk ? '达标' : '未达标') + '</span></td>' +
         '<td class="num">¥' + money(r.revenue) + '</td>' +
+        '<td class="num">¥' + money(r.totalPerf) + '</td>' +
         '<td><b>' + (r.coef != null ? r.coef : '—') + '</b></td></tr>'
-      ).join('') : '<tr><td colspan="13" class="empty">暂无设计师或数据</td></tr>') + '</tbody>';
+      ).join('') : '<tr><td colspan="14" class="empty">暂无设计师或数据</td></tr>') + '</tbody>';
 
     renderAnaProjects(rep);
     await renderConcurrencyDaily();
@@ -8096,7 +8159,9 @@
     tbl.innerHTML =
       '<thead><tr><th>单号</th><th>项目</th><th>客户</th><th>参与设计师</th><th>状态</th><th>改稿次数</th><th>投诉</th><th>周期(天)</th><th>金额</th></tr></thead><tbody>' +
       (list.length ? list.map(o =>
-        '<tr><td>' + esc(o.order_no) + '</td><td>' + esc(o.title) + '</td><td>' + esc(o.customer_name || '') + '</td>' +
+        '<tr><td><a class="link-open" data-oid="' + esc(o.id) + '" title="点击查看订单详情">' + esc(o.order_no) + '</a></td>' +
+        '<td><a class="link-open" data-oid="' + esc(o.id) + '" title="点击查看订单详情">' + esc(o.title) + '</a></td>' +
+        '<td>' + esc(o.customer_name || '') + '</td>' +
         '<td>' + esc(o.participantNames.join(' / ')) + '</td><td>' + pill(o.status) + '</td><td>' + (o.revision_count ? ('改稿 ' + o.revision_count + ' 次' + (reworkDays(o) != null ? ' · ' + fmtCycle(reworkDays(o)) : '')) : '<span style="color:var(--muted)">—</span>') + '</td>' +
         '<td>' + (o.complaint_count ? (() => {
           const cr = complaintReasons(o);
@@ -8106,6 +8171,17 @@
         '<td class="num">' + (o.cycleDays != null ? fmtCycle(o.cycleDays) : '—') + '</td>' +
         '<td class="num">¥' + money(o.amount) + '</td></tr>'
       ).join('') : '<tr><td colspan="9" class="empty">范围内暂无订单</td></tr>') + '</tbody>';
+
+    // 点击单号 / 项目名 → 打开该订单详情（复用 openOrder，弹窗内按需补拉流程/投诉日志）
+    if (!tbl._openBound) {
+      tbl._openBound = true;
+      tbl.addEventListener('click', (e) => {
+        const el = e.target.closest('[data-oid]');
+        if (!el) return;
+        const id = el.getAttribute('data-oid');
+        if (id) openOrder(id);
+      });
+    }
   }
 
   // 设计师每日未完工并发曲线（按所选月份）

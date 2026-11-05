@@ -135,7 +135,8 @@
   .wb-ta-line { color: #5eead4 !important; background: #0c2b29 !important; border-left-color: #14b8a6 !important; }
   .collab-tag.ta-tag { background: #134e4a !important; color: #5eead4 !important; }
   .pw-rules { background: #1a2332 !important; border-color: #334155 !important; color: #94a3b8 !important; }
-  #anaSealNote.pending { background: #451a03 !important; border-color: #92400e !important; color: #fcd34d !important; }
+  #anaSealNote.pending { background: #1e3a8a !important; border-color: #1d4ed8 !important; color: #bfdbfe !important; }
+  #anaSealNote.warn { background: #7c2d12 !important; border-color: #c2410c !important; color: #fdba74 !important; }
   #anaSealNote.ok { background: #064e3b !important; border-color: #047857 !important; color: #6ee7b7 !important; }
   .temp-assist-form { background: #0f1629 !important; border-color: var(--line) !important; }
   .temp-assist-form .field select, .temp-assist-form .field input { background: #0f1629 !important; color: var(--ink) !important; border-color: var(--line) !important; }
@@ -804,27 +805,60 @@ section.active { display: block; animation: fade .25s; }
 #anaProjects td:nth-child(8), #anaProjects td:nth-child(9) { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* 经营分析 - 设计师明细表：固定列宽，防止表头与数据列错位 */
-#anaTable { min-width: 960px; }
+/* 经营分析设计师明细表：14 列，宽度与 HTML 顺序严格对应（业绩金额/提成金额各给足空间，系数补上宽度） */
+#anaTable { min-width: 1000px; }
 #anaTable th, #anaTable td { vertical-align: middle; }
 #anaTable th { vertical-align: bottom; white-space: nowrap; line-height: 1.25; }
-#anaTable th:nth-child(1) { width: 11%; }  /* 设计师 */
-#anaTable th:nth-child(2) { width: 8%; }   /* 角色 */
-#anaTable th:nth-child(3) { width: 6%; text-align: right; }  /* 派单量 */
-#anaTable th:nth-child(4) { width: 6%; text-align: right; }  /* 定稿率 */
-#anaTable th:nth-child(5) { width: 8%; text-align: right; }  /* 一次提案通过率 */
-#anaTable th:nth-child(6) { width: 7%; text-align: right; }  /* 初稿定稿率 */
-#anaTable th:nth-child(7) { width: 8%; text-align: right; }  /* 平均定稿时间 */
-#anaTable th:nth-child(8) { width: 7%; text-align: right; }  /* 设计返工率 */
-#anaTable th:nth-child(9) { width: 6%; text-align: right; }  /* 定稿数 */
-#anaTable th:nth-child(10) { width: 6%; text-align: right; } /* 完成率 */
-#anaTable th:nth-child(11) { width: 11%; text-align: center; } /* 小单(达标) */
-#anaTable th:nth-child(12) { width: 8%; text-align: right; } /* 营收 */
-#anaTable th:nth-child(13) { width: 7%; text-align: right; } /* 系数 */
+#anaTable th:nth-child(1)  { width: 10%; }                                   /* 设计师 */
+#anaTable th:nth-child(2)  { width: 6%; }                                    /* 角色 */
+#anaTable th:nth-child(3)  { width: 5%; text-align: right; }                 /* 派单量 */
+#anaTable th:nth-child(4)  { width: 6%; text-align: right; }                 /* 定稿率 */
+#anaTable th:nth-child(5)  { width: 7%; text-align: right; }                 /* 一次提案通过率 */
+#anaTable th:nth-child(6)  { width: 6%; text-align: right; }                 /* 初稿定稿率 */
+#anaTable th:nth-child(7)  { width: 8%; text-align: right; }                 /* 平均定稿时间 */
+#anaTable th:nth-child(8)  { width: 6%; text-align: right; }                 /* 设计返工率 */
+#anaTable th:nth-child(9)  { width: 5%; text-align: right; }                 /* 定稿数 */
+#anaTable th:nth-child(10) { width: 6%; text-align: right; }                 /* 完成率 */
+#anaTable th:nth-child(11) { width: 8%; text-align: center; }                /* 小单(达标) */
+#anaTable th:nth-child(12) { width: 9%; text-align: right; }                 /* 业绩金额 */
+#anaTable th:nth-child(13) { width: 9%; text-align: right; }                 /* 提成金额 */
+#anaTable th:nth-child(14) { width: 5%; text-align: right; }                 /* 系数 */
 #anaTable td:nth-child(3), #anaTable td:nth-child(4), #anaTable td:nth-child(5),
 #anaTable td:nth-child(6), #anaTable td:nth-child(7), #anaTable td:nth-child(8),
 #anaTable td:nth-child(9), #anaTable td:nth-child(10), #anaTable td:nth-child(12),
-#anaTable td:nth-child(13) { text-align: right; font-variant-numeric: tabular-nums; }
+#anaTable td:nth-child(13), #anaTable td:nth-child(14) { text-align: right; font-variant-numeric: tabular-nums; }
 #anaTable td:nth-child(11) { text-align: center; }
+/* 设计师列允许换行，避免长名字顶破列宽 */
+#anaTable td:nth-child(1), #dashPerfTable td:nth-child(1) { white-space: normal; word-break: break-all; }
+/* 小单(达标)：数字 + 徽章用 flex 居中，徽章在各行纵向对齐 */
+#anaTable td.ana-sm { display: flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+#anaTable td.ana-sm .ana-sm-num { font-variant-numeric: tabular-nums; }
+
+/* 经营分析「项目明细」单号/项目名：可点击查看订单详情 */
+#anaProjects a.link-open {
+  color: var(--primary, #4f46e5);
+  text-decoration: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+#anaProjects a.link-open:hover { text-decoration: underline; }
+:root.dark #anaProjects a.link-open { color: #a5b4fc; }
+
+/* 仪表盘「本月绩效速览」：9 列，金额列给足宽度 */
+#dashPerfTable { min-width: 720px; }
+#dashPerfTable th:nth-child(1) { width: 14%; }                                    /* 设计师 */
+#dashPerfTable th:nth-child(2) { width: 8%; text-align: right; }                  /* 接单 */
+#dashPerfTable th:nth-child(3) { width: 8%; text-align: right; }                  /* 定稿数 */
+#dashPerfTable th:nth-child(4) { width: 10%; text-align: right; }                 /* 定稿率 */
+#dashPerfTable th:nth-child(5) { width: 10%; text-align: right; }                 /* 完成率 */
+#dashPerfTable th:nth-child(6) { width: 7%; text-align: right; }                  /* 系数 */
+#dashPerfTable th:nth-child(7) { width: 9%; text-align: center; }                 /* 小单 */
+#dashPerfTable th:nth-child(8) { width: 17%; text-align: right; }                 /* 业绩金额 */
+#dashPerfTable th:nth-child(9) { width: 17%; text-align: right; }                 /* 提成金额 */
+#dashPerfTable td:nth-child(2), #dashPerfTable td:nth-child(3), #dashPerfTable td:nth-child(4),
+#dashPerfTable td:nth-child(5), #dashPerfTable td:nth-child(6), #dashPerfTable td:nth-child(8),
+#dashPerfTable td:nth-child(9) { text-align: right; font-variant-numeric: tabular-nums; }
+#dashPerfTable td:nth-child(7) { text-align: center; }
 
 .tbl th, .tbl td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); }
 .tbl th { background: #f8fafc; color: var(--muted); font-weight: 600; position: sticky; top: 0; }
@@ -2969,13 +3003,15 @@ select.log-filter-select, .log-filter-select { width: 100% !important; min-width
   margin: 10px 0 0; padding: 9px 12px; border-radius: 10px;
   font-size: 12.5px; line-height: 1.6;
 }
-#anaSealNote.pending { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+#anaSealNote.pending { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+#anaSealNote.warn    { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; }
 #anaSealNote.ok      { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
 .seal-badge {
   flex: none; display: inline-block; padding: 2px 9px; border-radius: 999px;
   font-size: 11.5px; font-weight: 700; line-height: 1.5; white-space: nowrap;
 }
-.seal-badge.pending { background: #f59e0b; color: #fff; }
+.seal-badge.pending { background: #3b82f6; color: #fff; }
+.seal-badge.warn    { background: #f97316; color: #fff; }
 .seal-badge.sealed  { background: #10b981; color: #fff; }
 .seal-txt { flex: 1; min-width: 0; }
 .seal-txt b { font-weight: 700; }
