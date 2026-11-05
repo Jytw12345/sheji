@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v595" srcset="icons/intl-box@2x.png?v595 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v598" srcset="icons/intl-box@2x.png?v598 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -4237,7 +4237,8 @@
   // 订单字段锁定规则（分节点、分字段，避免一刀切）
   //  - 派单设计师 / 协作设计师：从「提案」起占用产能并锁定（改走换人流程）；
   //    「派单」状态设计尚未开始，允许直接在下拉里改派设计师（不动状态、不进协作、不留换人记录）
-  //  - 客户 / 金额 / 任务类型 / 项目名 / 截稿日期：交付后入账依据，「已定稿」定格；
+  //  - 客户 / 任务类型 / 项目名 / 截稿日期：交付后入账依据，「已定稿」定格；
+  //    金额已放开：「已定稿」「已换人」后仍可在订单详情补填（用户诉求：0 元单会污染提成/大小单统计）。
   //    「已换人」仅锁定设计师/协作（产能占用），截稿/金额等放开给新接手设计师重约
   //  - 备注 / 文件路径 / 设计稿路径 / 投诉记录：永不锁定（交付后常需补录、投诉）
   const LOCK_MID = ['派单', '提案', '提案不通过', '设计中', '初稿', '客户反馈', '修改中'];
@@ -4245,7 +4246,8 @@
     // 派单状态：设计未开始，放开「派单设计师」可直接改派（区别于提案起的锁定中间态）
     if (status === '派单') return { level: 'mid', locked: new Set() };
     if (LOCK_MID.includes(status)) return { level: 'mid', locked: new Set(['designer']) };
-    if (status === '已定稿') return { level: 'terminal', locked: new Set(['designer', 'collab', 'customer', 'amount', 'type', 'title', 'deadline']) };
+    // 已定稿：金额放开可补填（详情里改金额后点「保存信息」即可）；其余入账依据仍锁死
+    if (status === '已定稿') return { level: 'terminal', locked: new Set(['designer', 'collab', 'customer', 'type', 'title', 'deadline']) };
     if (status === '已换人') return { level: 'switched', locked: new Set(['designer', 'collab']) };
     // 已取消（客户终止）：终态，锁定全部主信息 + 备注，不允许再修改订单内容
     if (status === '已取消') return { level: 'cancelled', locked: new Set(['designer', 'collab', 'customer', 'amount', 'type', 'title', 'deadline', 'notes']) };
@@ -4603,7 +4605,7 @@
       <div class="modal-actionbar">
         ${o.id && can('orders_delete') ? '<button class="btn danger" id="oDelete">删除</button>' : ''}
         <button class="btn secondary" id="oCancel" data-close>关闭</button>
-        <button class="btn" id="oSave"${isFinishedStatus(o.status) ? ' disabled title="订单已完成/已取消，信息已锁定不可修改" style="opacity:.5;cursor:not-allowed"' : ''}>保存信息</button>
+        <button class="btn" id="oSave"${(o.status === '已取消') ? ' disabled title="订单已取消，信息已锁定不可修改" style="opacity:.5;cursor:not-allowed"' : ''}>保存信息</button>
       </div>`;
     } else {
       html = `
@@ -5153,6 +5155,15 @@
     if (!lockOp(lk)) return;
     try {
       syncFieldsFromModal();
+      // 定稿金额提醒：金额为 0 时先确认，避免无金额订单污染提成/大小单统计；
+      // 即便按 0 元定稿，定稿后仍可在订单详情补填金额（金额字段已对「已定稿」放开）。
+      if (action === 'finalize' && !(Number(o.amount) > 0)) {
+        const ok = await uiConfirm(
+          '该订单金额仍为 0 元。\n\n定稿后金额仍可补填，但 0 元订单会干扰提成与大小单统计。\n确定要按 0 元定稿吗？',
+          '仍要定稿'
+        );
+        if (!ok) return;
+      }
       applyFlowAction(o, action, {
         designerId: $('#oDesigner').value,
         deadline: $('#oDeadline').value ? fromLocalInput($('#oDeadline').value) : null
