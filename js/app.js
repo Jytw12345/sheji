@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v606" srcset="icons/intl-box@2x.png?v606 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v607" srcset="icons/intl-box@2x.png?v607 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -8062,19 +8062,24 @@
     const seal = rep.seal || {};
     const sealNote = $('#anaSealNote');
     if (sealNote) {
+      // 实际超期天数：窗口结束至今 − 设定宽限期（仅已超宽限期时有意义）
+      const overdueDays = Math.max(0, (seal.daysAfterEnd || 0) - (seal.sealDays || 0));
       if (seal.sealed) {
         sealNote.innerHTML = '<span class="seal-badge sealed">已封账</span>'
           + '<span class="seal-txt">本期订单已全部结案，数字已固定，可作为考核依据。</span>';
         sealNote.classList.remove('pending', 'warn'); sealNote.classList.add('ok');
       } else if (!seal.withinGrace && seal.pending > 0) {
-        // 已超宽限期但仍有未结案单：最该警惕的状态，单独标红橙
+        // 已超宽限期但仍有未结案单：徽章只出现一次单数，正文补「超期多久 + 何时可考核」
         sealNote.innerHTML = '<span class="seal-badge warn">待结案 ' + seal.pending + ' 单</span>'
-          + '<span class="seal-txt">已超 ' + seal.sealDays + ' 天宽限期，仍有 <b>' + seal.pending + '</b> 单未结案，定稿率/业绩等指标仍会变化，暂不可作考核依据。</span>';
+          + '<span class="seal-txt">已超宽限期 <b>' + overdueDays + '</b> 天（设定 ' + seal.sealDays + ' 天）；这 '
+          + seal.pending + ' 单结案后数字即固定，届时再作考核依据。定稿率/返工率等指标目前仍会变化。</span>';
         sealNote.classList.remove('ok', 'pending'); sealNote.classList.add('warn');
       } else {
-        // 宽限期内：窗口刚结束，给数据沉淀时间
+        // 宽限期内：窗口刚结束给数据沉淀时间；有未结案单时一并点出，避免只看到倒计时
+        const pendingTxt = seal.pending > 0 ? '，仍有 <b>' + seal.pending + '</b> 单未结案' : '';
         sealNote.innerHTML = '<span class="seal-badge pending">封账宽限期内</span>'
-          + '<span class="seal-txt">距封账还剩 <b>' + seal.daysToSeal + '</b> 天（宽限期 ' + seal.sealDays + ' 天），指标可能变化，建议窗口结束后 ' + seal.sealDays + ' 天再作考核依据。</span>';
+          + '<span class="seal-txt">距封账还剩 <b>' + seal.daysToSeal + '</b> 天（宽限期 ' + seal.sealDays + ' 天）'
+          + pendingTxt + '，指标可能变化，建议窗口结束后 ' + seal.sealDays + ' 天再作考核依据。</span>';
         sealNote.classList.remove('ok', 'warn'); sealNote.classList.add('pending');
       }
     }
