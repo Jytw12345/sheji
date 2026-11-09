@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v607" srcset="icons/intl-box@2x.png?v607 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v609" srcset="icons/intl-box@2x.png?v609 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -5730,7 +5730,9 @@
     // 临时协助订单也展示给协助设计师（便于打开修改），但 `orders`（统计口径）仍只含 participants，故不计入任何业绩
     const taOrders = (state._orders || []).filter(o => d && isTaActiveNow(o, d.id, now) && !window.Cfg.participants(o).includes(d.id));
     cardOrders = cardOrders.concat(taOrders);
-    if (fStatus === 'active') cardOrders = cardOrders.filter(o => ['派单', '设计中', '初稿', '客户反馈', '修改中', '提案'].includes(o.status));
+    // 「进行中」= 全部非终态（与 Cfg.STATUS 中除 已定稿/已换人/已取消 外的状态一致），
+    // 补齐原先漏掉的「接单」「提案不通过」两个分支态。
+    if (fStatus === 'active') cardOrders = cardOrders.filter(o => ['接单', '派单', '提案', '提案不通过', '设计中', '初稿', '客户反馈', '修改中'].includes(o.status));
     else if (fStatus) cardOrders = cardOrders.filter(o => o.status === fStatus);
     if (fPeriod) {
       cardOrders = cardOrders.filter(o => {
@@ -6328,19 +6330,28 @@
     const draftIdx = FLOW.indexOf('初稿');
     const curIdx = window.Cfg.flowStageIndex(o.status);
     const hasDraft = !!o.draft_at || (draftIdx >= 0 && curIdx >= draftIdx && o.status !== '设计中');
-    const now = Date.now();
     const dl = new Date(o.deadline).getTime();
     if (isNaN(dl)) return { badge: '', cardClass: '', footClass: '' };
+
+    if (done) {
+      // 已完成单必须用「实际完结时间」跟截稿比，不能用当前时间：
+      // 否则历史单会随日期推移不断显示「超期 N 天完成」且数值每天增长。
+      const finishRaw = o.finalized_at || o.switched_at || o.cancel_at;
+      const finish = finishRaw ? new Date(finishRaw).getTime() : NaN;
+      if (isNaN(finish)) return { badge: '', cardClass: '', footClass: '' }; // 老单缺完结时间戳：不猜、不显示误导数字
+      const doneDiff = dl - finish;   // >0 按期/提前，<0 真实超期
+      const doneMin = Math.abs(Math.round(doneDiff / 60000));
+      const dd = Math.floor(doneMin / 1440), dh = Math.floor((doneMin % 1440) / 60), dm = doneMin % 60;
+      const doneSpan = dd > 0 ? (dd + ' 天 ' + dh + ' 时') : (dh > 0 ? (dh + ' 时 ' + dm + ' 分') : (dm + ' 分'));
+      if (doneDiff < 0) return { badge: '<span class="wb-dl-badge dl-muted">⏱ 超期 ' + doneSpan + ' 完成</span>', cardClass: '', footClass: '' };
+      return { badge: '<span class="wb-dl-badge dl-muted">✓ 按期完成</span>', cardClass: '', footClass: '' };
+    }
+
+    const now = Date.now();
     const diff = dl - now; // >0 剩余，<0 超期
     const absMin = Math.abs(Math.round(diff / 60000));
     const d = Math.floor(absMin / 1440), h = Math.floor((absMin % 1440) / 60), m = absMin % 60;
     const span = d > 0 ? (d + ' 天 ' + h + ' 时') : (h > 0 ? (h + ' 时 ' + m + ' 分') : (m + ' 分'));
-
-    if (done) {
-      // 已完成：弱化展示完成周期提示（复盘用，不抢眼）
-      if (diff < 0) return { badge: '<span class="wb-dl-badge dl-muted">⏱ 超期 ' + span + ' 完成</span>', cardClass: '', footClass: '' };
-      return { badge: '<span class="wb-dl-badge dl-muted">✓ 按期完成</span>', cardClass: '', footClass: '' };
-    }
     if (diff < 0) {
       // 已超截稿
       if (!hasDraft) {
