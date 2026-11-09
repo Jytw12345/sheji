@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v603" srcset="icons/intl-box@2x.png?v603 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v606" srcset="icons/intl-box@2x.png?v606 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -3261,9 +3261,8 @@
     $('#anaMonth').addEventListener('change', renderConcurrencyDaily);
     // 客户
     $('#btnNewCustomer').addEventListener('click', newCustomer);
-    // 经营分析导出
+    // 经营分析导出（设计师筛选在导出的 Excel 项目明细表里用自动筛选完成，界面不再放下拉）
     $('#btnAnaCSV').addEventListener('click', exportAnaCSV);
-    $('#anaDesignerFilter').addEventListener('change', renderAnalytics);
     const btnDashPerfCSV = $('#btnDashPerfCSV'); if (btnDashPerfCSV) btnDashPerfCSV.addEventListener('click', exportDashCSV);
     // 设置
     $('#btnSaveParams').addEventListener('click', saveParams);
@@ -7338,6 +7337,12 @@
       const pctCell = v => cell(n(v), S.pct);
       const muted = v => cell(v, S.muted);
       const cycle = v => cell(v, S.cycle);
+      // 总览居中 / 系数两位小数：这几个是 S.xxx 样式对象的「单元格包装器」。
+      // 必须与 S.numC / S.moneyC / S.pctC / S.num2 一一对应，否则构造 overview 时会抛 numC is not defined。
+      const numC = v => cell(n(v), S.numC);
+      const moneyC = v => cell(n(v), S.moneyC);
+      const pctC = v => cell(n(v), S.pctC);
+      const num2 = v => cell(n(v), S.num2);
 
       // ---------- Sheet1 总览 KPI ----------
       const t = rep.totals, sm = rep.small;
@@ -7421,7 +7426,8 @@
       const orderFreeze = { xSplit: 0, ySplit: 1, topLeftCell: 'A2' };
 
       if (hasXlsx) {
-        const wb = window.XLSX.utils.book_new();
+        try {
+          const wb = window.XLSX.utils.book_new();
         const wsOverview = window.XLSX.utils.aoa_to_sheet(overview);
         wsOverview['!merges'] = overviewMerges;
         wsOverview['!cols'] = overviewCols;
@@ -7440,9 +7446,15 @@
         if (orderRows.length) wsOrder['!autofilter'] = { ref: 'A1:O' + (orderRows.length + 1) };
         window.XLSX.utils.book_append_sheet(wb, wsOrder, '项目明细');
 
-        window.XLSX.writeFile(wb, fnBase + '.xlsx', { cellStyles: true });
-        toast('已导出 Excel（含总览/设计师/项目三表）');
-      } else {
+        const wbout = window.XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+          saveBlob(new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), fnBase + '.xlsx');
+          toast('已导出 Excel（含总览/设计师/项目三表）');
+        } catch (e) {
+          console.warn('XLSX 写入失败，降级为 CSV', e);
+          hasXlsx = false;
+        }
+      }
+      if (!hasXlsx) {
         // CSV 降级：无样式，保持简单文本
         const overviewCSV = [
           ['经营分析报表', period, rangeText],
@@ -7487,15 +7499,39 @@
         setTimeout(() => downloadAOA([orderHead].concat(orderRows.map(r => r.map(fmtCSV))), fnBase + '_项目.csv'), 600);
         toast('已导出 CSV（XLSX 不可用，已拆分为三个 CSV）');
       }
+    } catch (e) {
+      console.error('导出经营分析失败', e);
+      toast('导出失败：' + (e && e.message || e));
     } finally {
       unlockOp('exportAna');
     }
   }
+  // 统一下载：优先 <a download>；移动端/WebView 追加系统分享兜底
+  // （部分 Android WebView 会忽略 download 属性，导致"点了没反应"）
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    const ua = navigator.userAgent || '';
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(ua);
+    if (isMobile) {
+      try {
+        const file = new File([blob], filename, { type: blob.type });
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+          navigator.share({ files: [file], title: filename }).catch(() => {});
+        } else if (navigator.share) {
+          navigator.share({ files: [file] }).catch(() => {});
+        } else {
+          window.open(url, '_blank');
+        }
+      } catch (e) { /* 忽略：分享不可用，已通过 a.click 尽力下载 */ }
+    }
+    setTimeout(() => { try { document.body.removeChild(a); } catch (e) {} URL.revokeObjectURL(url); }, 1500);
+  }
   function downloadAOA(aoa, filename) {
     const csv = '﻿' + aoa.map(r => r.map(c => { const s = String(c ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',')).join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    saveBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), filename);
   }
   // 仪表盘「本月绩效速览」导出 CSV（含业绩金额/提成金额）
   async function exportDashCSV() {
@@ -8072,17 +8108,7 @@
       el.style.setProperty('--kpi-bg', c + '18');
     });
 
-    let rows = rep.rows;
-    // 设计师筛选下拉（先填全部选项，再据此过滤图表与表格）
-    const fSel = $('#anaDesignerFilter');
-    const fName = fSel ? fSel.value : '';
-    if (fSel) {
-      const prev = fName;
-      fSel.innerHTML = '<option value="">全部设计师</option>' +
-        rows.map(r => '<option value="' + esc(r.designerName) + '">' + esc(r.designerName) + '</option>').join('');
-      if ([...fSel.options].some(o => o.value === prev)) fSel.value = prev; // 保留上次选择
-    }
-    if (fName) rows = rows.filter(r => r.designerName === fName);
+    const rows = rep.rows;
     const names = rows.map((r, i) => {
       const raw = r && r.designerName;
       const s = String(raw != null ? raw : '').trim();
