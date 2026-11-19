@@ -549,8 +549,19 @@ window.DB = (function () {
     let error;
     if (exists) {
       const { id, ...patch } = row;
-      const res = await sb.from(table).update(patch).eq('id', id);
+      // 订单：要求回读被更新行的 id。PostgREST 在 RLS using 不放行时会「影响 0 行且 error=null」，
+      // 旧逻辑会把它当成保存成功并写本地缓存（假保存），刷新后被服务端旧值覆盖，
+      // 表现为「改稿次数/流程改动明明存了却又没了」。0 行必须显式报错，不能静默。
+      let q = sb.from(table).update(patch).eq('id', id);
+      const needEcho = (table === 'orders');
+      if (needEcho) q = q.select('id');
+      const res = await q;
       error = res.error;
+      // 仅在「明确返回空数组」时判定 0 行；若库未回传 data（null/undefined）则跳过校验，
+      // 退化为原有行为，避免不同 supabase 版本下误伤正常保存。
+      if (!error && needEcho && Array.isArray(res.data) && res.data.length === 0) {
+        throw new Error('保存未生效：该订单可能无权修改或已被移除，改动未写入服务器，请刷新后重试');
+      }
     } else {
       const res = await sb.from(table).upsert(row, { onConflict: 'id' });
       error = res.error;

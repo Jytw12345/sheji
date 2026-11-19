@@ -362,7 +362,7 @@
   // 「待发」图标：直接用设计给的原图（icons/intl-box.png，已抠透明底）。
   // 不用手绘 SVG —— 手绘复刻始终对不上原稿；也不用 emoji —— 各平台渲染不一致。
   // 带 ?vNNN 与 sw.js PRECACHE 保持逐字一致；srcset 让高 DPI 屏用 2x 图，这是小尺寸不糊的关键。
-  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v609" srcset="icons/intl-box@2x.png?v609 2x" alt="" width="14" height="14">';
+  const ICON_IBOX = '<img class="ibox" src="icons/intl-box.png?v615" srcset="icons/intl-box@2x.png?v615 2x" alt="" width="14" height="14">';
   function internalCustomerSet() { return new Set((state._customers || []).filter(c => c.is_internal).map(c => c.id)); }
   function isInternalPending(o) {
     if (!o || !o.customer_id) return false;
@@ -4190,7 +4190,9 @@
     if (ts < nowTs) {
       const hours = Math.max(1, Math.ceil((nowTs - ts) / 3600000));
       warn.className = 'dl-warn warn';
-      warn.textContent = days === 0 ? '今天截稿（已过期 ' + hours + ' 小时）' : '已逾期 ' + days + ' 天，请修正';
+      // days 为「截稿日−今天」，过期时是负数，显示需取绝对值（否则出现「已逾期 -97 天」）
+      const overdueDays = Math.abs(days);
+      warn.textContent = overdueDays === 0 ? '今天截稿（已过期 ' + hours + ' 小时）' : '已逾期 ' + overdueDays + ' 天，请修正';
       return;
     }
 
@@ -4363,7 +4365,16 @@
       if (isTerminal && i > cur) return '';
       if (o.status === '已换人') { cls = (i < idx('客户反馈')) ? 'st done' : 'st'; }
       else if (i < cur) cls = 'st done'; else if (i === cur) cls = 'st cur';
-      return '<span class="' + cls + '">' + s + '</span>';
+      // 「修改中」是可选分支：客户反馈通过即可直接定稿，并非所有单都走过。
+      // 不能仅凭线性索引 i<cur 就标绿——否则没改过稿的单也显示绿色完成态。
+      // 仅当流程日志真实记录进入过修改中（action=revise 或 to=修改中）才算走完；
+      // 否则降为「未经历」态（灰色描边）。flow_history 未补拉数组时维持原判断，避免首次渲染误判。
+      if (s === '修改中' && cls === 'st done' && Array.isArray(o.flow_history)) {
+        const entered = o.flow_history.some(e => e && (e.to === '修改中' || e.action === 'revise'));
+        if (!entered) cls = 'st skipped';
+      }
+      const tip = (cls === 'st skipped') ? ' title="本单未经历修改中阶段（客户反馈直接通过）"' : '';
+      return '<span class="' + cls + '"' + tip + '>' + s + '</span>';
     }).join('');
 
     // 流程操作按钮
@@ -4487,6 +4498,17 @@
           <div class="grid2-sm">
             <div class="field"><label>修改次数</label><div class="ro-box"><span id="revVal" class="ro-val">${o.revision_count || 0}</span><button type="button" class="btn-mini" data-revision="inc" title="手动补记一次修改（客户反复修改时 +1）">＋1</button><span class="muted" style="font-size:11px"> 流程自动累计</span></div></div>
             <div class="field"><label>客户投诉笔数</label><div class="ro-box"><span id="complaintVal" class="ro-val">${o.complaint_count || 0}</span><button type="button" class="btn-mini" data-complaint="inc" title="记录一次客户投诉（+1）">＋投诉</button></div></div>
+          </div>
+          <div class="field" style="margin-top:10px"><label>修改记录</label>
+            ${(() => {
+              const rl = Array.isArray(o.revision_log) ? o.revision_log : [];
+              const note = String(o.revision_note || '').trim();
+              let h = rl.length
+                ? '<div class="complaint-list">' + rl.map((t, i) => '<div class="complaint-item"><span class="muted">#' + (i + 1) + '</span> <span class="muted">' + esc(fmtTime(t)) + '</span></div>').join('') + '</div>'
+                : '<span class="muted" style="font-size:12px">暂无修改记录</span>';
+              if (note) h += '<div class="cmp-note" style="margin-top:6px">' + esc(note).split(String.fromCharCode(10)).join('<br>') + '</div>';
+              return h;
+            })()}
           </div>
           <div class="field" style="margin-top:10px"><label>投诉原因</label>
             ${(o.complaint_log && o.complaint_log.length)
@@ -5688,6 +5710,71 @@
     }
   }
   function todayStr() { return new Date().toISOString().slice(0, 10); }
+  // 长期挂单提醒（2026-11-19）：非终态订单「停留当前状态 ≥ 阈值 或 已超期 ≥ 阈值」即计入。
+  // 阈值 30 天。判定用进入当前状态的时间戳（各状态字段见 applyFlowAction），
+  // 无对应戳时用流程日志数组末条兜底（历史/回退单）。终态（已定稿/已换人/已取消）不算。
+  const WB_STALE_DAYS = 30;
+  const WB_STALE_TERMINAL = ['已定稿', '已换人', '已取消'];
+  function staleDaysOf(o, nowTs) {
+    // 进入当前状态的时间戳映射
+    const stageTs = {
+      '接单': o.intake_at,
+      '派单': o.dispatch_at,
+      '提案': (o.proposal_log && o.proposal_log.length) ? o.proposal_log[o.proposal_log.length - 1] : o.proposal_at,
+      '提案不通过': (o.proposal_failed_log && o.proposal_failed_log.length) ? o.proposal_failed_log[o.proposal_failed_log.length - 1] : o.proposal_failed_at,
+      '设计中': o.design_started_at,
+      '初稿': (o.draft_log && o.draft_log.length) ? o.draft_log[o.draft_log.length - 1] : o.draft_at,
+      '客户反馈': o.feedback_at,
+      '修改中': (o.revision_log && o.revision_log.length) ? o.revision_log[o.revision_log.length - 1] : (o.revision_at || o.redraft_at)
+    };
+    const t = stageTs[o.status] ? new Date(stageTs[o.status]).getTime() : NaN;
+    const stageDays = isNaN(t) ? 0 : Math.floor((nowTs - t) / 86400000);
+    const dl = o.deadline ? new Date(o.deadline).getTime() : NaN;
+    const overdueDays = isNaN(dl) ? 0 : Math.floor((nowTs - dl) / 86400000);
+    const reason = [];
+    if (stageDays >= WB_STALE_DAYS) reason.push('滞留 ' + stageDays + ' 天');
+    if (overdueDays >= WB_STALE_DAYS) reason.push('超期 ' + overdueDays + ' 天');
+    return reason.length ? { hit: true, stageDays, overdueDays, reason: reason.join(' · ') } : { hit: false };
+  }
+
+  function renderStaleNote(orders, designerName) {
+    const el = $('#wbStaleNote');
+    if (!el) return;
+    const nowTs = Date.now();
+    const stale = (orders || [])
+      .filter(o => !WB_STALE_TERMINAL.includes(o.status))
+      .map(o => ({ o, s: staleDaysOf(o, nowTs) }))
+      .filter(x => x.s.hit)
+      .sort((a, b) => Math.max(b.s.stageDays, b.s.overdueDays) - Math.max(a.s.stageDays, a.s.overdueDays));
+    if (!stale.length) { el.innerHTML = ''; return; } // 无挂单：不显示横条（不打扰正常路径）
+
+    const rows = stale.map(({ o, s }) =>
+      '<button type="button" class="wb-stale-row" data-stale-open="' + esc(o.id) + '" title="点击查看订单详情">' +
+        '<span class="wsr-main">' + esc(o.order_no) + ' · ' + esc(o.title) + '</span>' +
+        '<span class="wsr-meta">' + esc(o.status) + ' · ' + esc(designerName || '') + '</span>' +
+        '<span class="wsr-days">' + esc(s.reason) + '</span>' +
+      '</button>').join('');
+    el.innerHTML =
+      '<div class="wb-stale-note" id="wbStaleCard">' +
+        '<button type="button" class="wb-stale-head" id="wbStaleToggle" aria-expanded="false">' +
+          '<span class="wsn-ico">⏳</span>' +
+          '<span class="wsn-text">发现 <b>' + stale.length + '</b> 单长期未推进（滞留或超期 ≥ ' + WB_STALE_DAYS + ' 天）</span>' +
+          '<span class="wsn-arrow" id="wbStaleArrow">▾</span>' +
+        '</button>' +
+        '<div class="wb-stale-list" id="wbStaleList" style="display:none">' + rows + '</div>' +
+      '</div>';
+
+    const head = $('#wbStaleToggle'), list = $('#wbStaleList'), arrow = $('#wbStaleArrow');
+    head.addEventListener('click', () => {
+      const open = list.style.display === 'none';
+      list.style.display = open ? '' : 'none';
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (arrow) arrow.textContent = open ? '▴' : '▾';
+    });
+    $$('#wbStaleList [data-stale-open]').forEach(b =>
+      b.addEventListener('click', () => openOrder(b.dataset.staleOpen)));
+  }
+
   function renderWorkbench() {
     if ((state.wbView || 'personal') === 'team') { renderTeamBoard(); return; }
     if (state.wbView === 'load') { renderLoadBoard(); return; }
@@ -5698,6 +5785,7 @@
       fill('#wDesigner', []);
       $('#workbenchStats').innerHTML = '<div class="kpi" style="flex:1"><div class="label">提示</div><div class="value" style="font-size:16px">请先在设置页添加设计师</div></div>';
       $('#workbenchKpis').innerHTML = '';
+      const staleEl2 = $('#wbStaleNote'); if (staleEl2) staleEl2.innerHTML = '';
       $('#workbenchCards').innerHTML = '<div class="empty">暂无设计师</div>';
       return;
     }
@@ -5721,6 +5809,8 @@
       if (sa !== sb) return sa - sb;
       return (b.intake_at || '').localeCompare(a.intake_at || '');
     });
+    // 长期挂单提醒：基于当前设计师的全部订单（不受状态/周期筛选影响），独立渲染
+    renderStaleNote(orders, d ? d.name : '');
 
     // 工作台筛选：状态 + 时间周期，仅影响下方订单卡片列表，统计/KPI 仍显示总览
     const fStatus = $('#wbStatus') ? $('#wbStatus').value : '';
@@ -5791,17 +5881,21 @@
 
     // 绩效指标（更多内容）
     const finalizedAny = orders.filter(o => o.status === '已定稿');
-    const dispatchCount = orders.length;
+    // 派单量（展示口径 A）：已取消单中「提案及之后才取消」的计入，仅派单即取消的不计入。
+    // 注意：定稿率分母 wbEffectiveCount 仍排除全部已取消，与绩效工资口径一致，不受此影响。
+    const dispatchCount = orders.filter(o => o.status !== '已取消' || window.Calc.isEngagedCancel(o)).length;
     // 客户取消的订单不计入定稿率分母（与经营分析/绩效月报口径统一）
     const wbEffectiveCount = orders.filter(o => o.status !== '已取消').length;
     const finalizeRate = wbEffectiveCount ? finalizedAny.length / wbEffectiveCount : 0;
     const proposalDecided = orders.filter(o => o.proposal_pass_at || o.proposal_failed_at);
     const firstPass = proposalDecided.filter(o => (o.proposal_count || 0) <= 1 && !o.proposal_failed_at).length;
     const firstProposalPassRate = proposalDecided.length ? firstPass / proposalDecided.length : 0;
-    const draftToFinalize = finalizedAny.filter(o => (o.revision_count || 0) === 0).length;
+    // 与经营分析/绩效月报统一：改稿次数走 Calc.revCountOf（计数缺失时用流程日志兜底），
+    // 避免标量 revision_count 丢失导致「初稿定稿率虚高成 100%」。
+    const draftToFinalize = finalizedAny.filter(o => window.Calc.revCountOf(o) === 0).length;
     const draftToFinalizeRate = finalizedAny.length ? draftToFinalize / finalizedAny.length : 0;
-    // 设计返工率（新口径）：已定稿中经历过程改(revision_count>0)的占比（rework_category 已不再采集）
-    const reworkedCount = finalizedAny.filter(o => (o.revision_count || 0) > 0).length;
+    // 设计返工率：已定稿中经历过改稿的占比（同样走日志兜底）
+    const reworkedCount = finalizedAny.filter(o => window.Calc.revCountOf(o) > 0).length;
     const reworkRate = finalizedAny.length ? reworkedCount / finalizedAny.length : 0;
     let cycSum = 0, cycN = 0;
     finalizedAny.forEach(o => {
@@ -5817,14 +5911,14 @@
       return sum + (split[d.id] || 0);
     }, 0);
 
-    const mk = (icon, value, label, accent) =>
-      '<div class="kpi wb-mk-compact" data-accent="' + (accent || '#6366f1') + '">' +
+    const mk = (icon, value, label, accent, tip) =>
+      '<div class="kpi wb-mk-compact" data-accent="' + (accent || '#6366f1') + '"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>' +
         '<div class="kpi-icon">' + icon + '</div>' +
         '<div class="value">' + value + '</div>' +
         '<div class="label">' + esc(label) + '</div>' +
       '</div>';
     let kpisHtml =
-      mk('📋', dispatchCount, '派单量', '#0ea5e9') +
+      mk('📋', dispatchCount, '派单量', '#0ea5e9', '含「提案后取消」单，不含「派单即取消」单；定稿率分母仍排除全部已取消') +
       mk('📊', pct(finalizeRate), '定稿率', '#06b6d4') +
       mk('🎯', pct(firstProposalPassRate), '提案通过率', '#f59e0b') +
       mk('🎨', pct(draftToFinalizeRate), '初稿定稿率', '#4f46e5') +
@@ -6176,6 +6270,7 @@
   function renderTeamBoard() {
     const sec = $('#tab-designers');
     if (sec) sec.classList.add('team');
+    const staleEl0 = $('#wbStaleNote'); if (staleEl0) staleEl0.innerHTML = ''; // 团队视图不显示个人挂单提醒
     const ds = state._designers || [];
     const viewAll = isViewAll();
     let list = ds.filter(d => isActiveDesign(d));
@@ -6216,6 +6311,7 @@
   function renderLoadBoard() {
     const sec = $('#tab-designers');
     if (sec) sec.classList.add('team'); // 复用 team 模式布局（workbench-cards 铺满）
+    const staleEl1 = $('#wbStaleNote'); if (staleEl1) staleEl1.innerHTML = ''; // 负荷视图不显示个人挂单提醒
     const ds = state._designers || [];
     const viewAll = isViewAll();
     let list = ds.filter(d => isActiveDesign(d));
@@ -7362,10 +7458,10 @@
         [cell(period, S.subtitle), cell(rangeText, S.subtitle), null],
         [],
         [cell('KPI', S.section), cell('数值', S.section), cell('说明', S.section)],
-        [txt('总接单量'), numC(r4(t.intakeCount)), muted('范围内接单总数')],
+        [txt('总接单量'), numC(r4(t.intakeCount)), muted('含提案后取消·不含派单即取消')],
         [txt('规定时间总营收'), moneyC(r4(t.revenue)), muted('范围内全部单子金额合计')],
         [txt('客户投诉笔数'), numC(r4(t.complaints)), muted('范围内投诉合计')],
-        [txt('派单订单数'), numC(r4(t.dispatchOrders)), muted('范围内派发（唯一单）')],
+        [txt('派单订单数'), numC(r4(t.dispatchOrders)), muted('含提案后取消·不含派单即取消')],
         [txt('平均定稿时间'), txt(t.avgCycleTeam ? fmtCycle(t.avgCycleTeam) : '—'), muted('派单→定稿均值')],
         [txt('提案通过率'), pctC(r4(t.proposalPassRate)), muted('提案通过 ÷ 已决提案')],
         [txt('一次提案通过率'), pctC(r4(t.firstProposalPassRate)), muted('首次提案一次过 ÷ 已决提案')],
@@ -7471,10 +7567,10 @@
           ['经营分析报表', period, rangeText],
           [],
           ['KPI', '数值', '说明'],
-          ['总接单量', t.intakeCount, '范围内接单总数'],
+          ['总接单量', t.intakeCount, '含提案后取消·不含派单即取消'],
           ['规定时间总营收', n(t.revenue), '范围内全部单子金额合计'],
           ['客户投诉笔数', t.complaints, '范围内投诉合计'],
-          ['派单订单数', t.dispatchOrders, '范围内派发（唯一单）'],
+          ['派单订单数', t.dispatchOrders, '含提案后取消·不含派单即取消'],
           ['平均定稿时间', t.avgCycleTeam ? fmtCycle(t.avgCycleTeam) : '—', '派单→定稿均值'],
           ['提案通过率', pct(t.proposalPassRate), '提案通过 ÷ 已决提案'],
           ['一次提案通过率', pct(t.firstProposalPassRate), '首次提案一次过 ÷ 已决提案'],
@@ -8102,10 +8198,10 @@
         '<div class="kpi-body"><div class="label">' + label + '</div><div class="value">' + value + '</div><div class="hint">' + hint + '</div></div>' +
       '</div>';
     $('#kpiAna').innerHTML =
-      kpi('总接单量', t.intakeCount, '范围内接单总数', '📋', '#6366f1') +
+      kpi('总接单量', t.intakeCount, '含提案后取消 · 不含派单即取消', '📋', '#6366f1') +
       kpi('规定时间总营收', '¥' + money(t.revenue), '范围内全部单子', '💰', '#f59e0b') +
       kpi('客户投诉笔数', t.complaints, '范围内投诉合计', '⚠️', '#ef4444') +
-      kpi('派单订单数', t.dispatchOrders, '范围内派发（唯一单）', '📦', '#0ea5e9') +
+      kpi('派单订单数', t.dispatchOrders, '含提案后取消 · 不含派单即取消', '📦', '#0ea5e9') +
       kpi('平均定稿时间', t.avgCycleTeam ? fmtCycle(t.avgCycleTeam) : '—', '派单→定稿均值', '⏱', '#14b8a6') +
       kpi('提案通过率', pct(t.proposalPassRate), '提案通过 ÷ 已决提案', '🎯', '#f59e0b') +
       kpi('一次提案通过率', pct(t.firstProposalPassRate), '首次提案一次过 ÷ 已决提案', '🎯', '#8b5cf6') +
@@ -8204,7 +8300,11 @@
         '<tr><td><a class="link-open" data-oid="' + esc(o.id) + '" title="点击查看订单详情">' + esc(o.order_no) + '</a></td>' +
         '<td><a class="link-open" data-oid="' + esc(o.id) + '" title="点击查看订单详情">' + esc(o.title) + '</a></td>' +
         '<td>' + esc(o.customer_name || '') + '</td>' +
-        '<td>' + esc(o.participantNames.join(' / ')) + '</td><td>' + pill(o.status) + '</td><td>' + (o.revision_count ? ('改稿 ' + o.revision_count + ' 次' + (reworkDays(o) != null ? ' · ' + fmtCycle(reworkDays(o)) : '')) : '<span style="color:var(--muted)">—</span>') + '</td>' +
+        '<td>' + esc(o.participantNames.join(' / ')) + '</td><td>' + pill(o.status) + '</td><td>' + (o.revision_count ? (() => {
+          const rl = Array.isArray(o.revision_log) ? o.revision_log : [];
+          const tip = rl.length ? ' title="修改记录：' + esc(rl.map(t => fmtTime(t)).join(' / ')) + '"' : '';
+          return '<span' + tip + '>改稿 ' + o.revision_count + ' 次' + (reworkDays(o) != null ? ' · ' + fmtCycle(reworkDays(o)) : '') + '</span>';
+        })() : '<span style="color:var(--muted)">—</span>') + '</td>' +
         '<td>' + (o.complaint_count ? (() => {
           const cr = complaintReasons(o);
           const designComplaint = Array.isArray(o.complaint_log) && o.complaint_log.some(c => c.reason === '设计原因');

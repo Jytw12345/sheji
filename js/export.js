@@ -68,7 +68,7 @@ window.Exporter = (function () {
     const rows2 = winOrders.map(o => [
       o.order_no, o.title, o.customer_name || '', o.task_type, money(o.amount),
       window.Cfg.orderCategory(Number(o.amount) || 0, settings),
-      designerName(o.assigned_designer_id), (window.Cfg.STATUS[o.status] || {}).label || o.status, o.revision_count || 0,
+      designerName(o.assigned_designer_id), (window.Cfg.STATUS[o.status] || {}).label || o.status, window.Calc.revCountOf(o),
       (o.status === '已定稿' && (o.revision_count || 0) <= 1) ? '是' : '否',
       fmtTime(o.intake_at), fmtTime(o.dispatch_at), fmtTime(o.deadline), fmtTime(o.finalized_at)
     ]).sort((a, b) => (a[10] < b[10] ? -1 : 1));
@@ -95,7 +95,7 @@ window.Exporter = (function () {
     const rows = orders.map(o => [
       o.order_no, o.title, o.customer_name || '', o.task_type, money(o.amount),
       window.Cfg.orderCategory(Number(o.amount) || 0, settings),
-      dName(o.assigned_designer_id), (window.Cfg.STATUS[o.status] || {}).label || o.status, o.revision_count || 0,
+      dName(o.assigned_designer_id), (window.Cfg.STATUS[o.status] || {}).label || o.status, window.Calc.revCountOf(o),
       (o.status === '已定稿' && (o.revision_count || 0) <= 1) ? '是' : '否',
       fmtTime(o.intake_at), fmtTime(o.dispatch_at), fmtTime(o.deadline),
       fmtTime(o.finalized_at), o.notes || ''

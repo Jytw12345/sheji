@@ -59,6 +59,32 @@ window.Calc = (function () {
     return order.status === '已定稿' && (order.revision_count || 0) <= 1;
   }
 
+  // 改稿次数统一口径：计数字段优先，计数缺失/被覆盖时用流程日志条数兜底。
+  // 历史订单存在 revision_count=0 但 revision_log / feedback_failed_log 仍留痕的情况
+  // （标量计数会因跨端对账、旧数据、部分更新丢失，而日志数组更耐久），
+  // 兜底可避免「定稿后改稿次数变空白」以及「初稿定稿率虚高成 100%」。
+  // 用于：项目明细/导出、初稿定稿率、设计返工率、一次提案通过率等统计展示口径。
+  // 注意：不参与 isFinalized / 绩效系数 / 工资核算（那是薪酬口径，改动需单独确认）。
+  function revCountOf(o) {
+    if (!o) return 0;
+    const n = Number(o.revision_count) || 0;
+    let m = 0;
+    [o.revision_log, o.feedback_failed_log].forEach(a => {
+      if (Array.isArray(a) && a.length > m) m = a.length;
+    });
+    return Math.max(n, m);
+  }
+
+  // 已取消单是否「已投入」：提案及之后才取消的算已投入（计入总单数展示），
+  // 仅接单/派单就取消的不算。判定基于提案时间戳 + 取消前状态，字段均在 ORDER_LEAN_COLS。
+  // 仅用于「总接单量 / 派单量」等数量展示口径；定稿率/完成率分母与绩效工资口径保持不变。
+  function isEngagedCancel(o) {
+    if (!o || o.status !== '已取消') return false;
+    if (o.proposal_at || o.proposal_pass_at || o.proposal_failed_at || (Number(o.proposal_count) || 0) > 0) return true;
+    const pre = o.pre_cancel_status;
+    return !!pre && ['提案', '提案不通过', '设计中', '初稿', '客户反馈', '修改中', '已定稿', '已换人'].includes(pre);
+  }
+
   // 计算单设计师在指定范围内的绩效（工资口径）
   // inRange(order): 判定该订单是否计入本考核范围（基于 intake_at 的窗口/范围）
   // 绩效月报与经营分析共用此函数，保证工资语义一致
@@ -400,13 +426,14 @@ window.Calc = (function () {
 
     // 提案（团队）
     const proposalResolvedAll = effectiveDispatch.filter(o =>
-      isFinalized(o) || (o.revision_count || 0) >= 1 || o.status === '已换人');
+      isFinalized(o) || revCountOf(o) >= 1 || o.status === '已换人');
     const proposalPassAll = effectiveDispatch.filter(o =>
-      o.status === '已定稿' && (o.revision_count || 0) === 0).length;
-    // 设计返工率（新口径）：已定稿订单中「经历过程改(revision_count>0)」的占比。
+      o.status === '已定稿' && revCountOf(o) === 0).length;
+    // 设计返工率（新口径）：已定稿订单中「经历过改稿(revCountOf>0)」的占比。
     // 原口径依赖 rework_category（设计原因/客户原因），但该字段已不再由流程写入，恒为空→恒为 0。
-    // 现改用 revision_count（客户反馈→修改中 时自动 +1）近似「需返工的单 ÷ 已定稿」，无需新增录入。
-    const reworkedAll = finalizedAll.filter(o => (o.revision_count || 0) > 0).length;
+    // 现改用 revCountOf（revision_count 为主、流程日志兜底；客户反馈→修改中 时自动 +1）
+    // 近似「需返工的单 ÷ 已定稿」，无需新增录入，也不怕标量计数丢失导致返工率被抹成 0。
+    const reworkedAll = finalizedAll.filter(o => revCountOf(o) > 0).length;
     const finalizedAllAny = effectiveDispatch.filter(o => o.status === '已定稿');
 
     // 一次提案通过率（团队）：首次提案就一次性通过 ÷ 已决提案
@@ -416,8 +443,8 @@ window.Calc = (function () {
     const firstPassAll = proposalDecidedAll.filter(o => (o.proposal_count || 0) <= 1 && !o.proposal_failed_at).length;
     const firstProposalPassRateAll = proposalDecidedAll.length ? firstPassAll / proposalDecidedAll.length : 0;
 
-    // 初稿定稿率（团队）：已定稿且没有修改过（revision_count === 0）
-    const draftToFinalizeAll = finalizedAllAny.filter(o => (o.revision_count || 0) === 0).length;
+    // 初稿定稿率（团队）：已定稿且没有修改过（revCountOf === 0，日志兜底防止虚高成 100%）
+    const draftToFinalizeAll = finalizedAllAny.filter(o => revCountOf(o) === 0).length;
     const draftToFinalizeRate = finalizedAllAny.length ? draftToFinalizeAll / finalizedAllAny.length : 0;
 
     // 平均定稿时间（团队）
@@ -426,6 +453,14 @@ window.Calc = (function () {
     const avgCycleTeam = cycN ? cycSum / cycN : 0;
 
     const currentInProgress = src.filter(o => IN_PROGRESS.includes(o.status)).length;
+
+    // ---- A 方案展示口径（2026-11-19）----
+    // 「总接单量/派单订单数」等数量展示：已取消单中「已投入（提案及之后）」的计入，
+    // 仅派单即取消的不计入。注意这只改展示计数，不碰 effectiveDispatch/effectiveMine
+    // 等定稿率分母（分母仍排除全部已取消），更不碰 designerWage 绩效工资口径。
+    const countedInTotal = o => o.status !== '已取消' || isEngagedCancel(o);
+    const intakeCountDisplay = src.filter(o => inRangeAt(o, 'intake_at', range) && countedInTotal(o)).length;
+    const dispatchCountDisplay = dispatchOrders.filter(countedInTotal).length;
 
     // ---------- 每位设计师 ----------
     const rows = designersActive.map(d => {
@@ -438,15 +473,15 @@ window.Calc = (function () {
       const finalizeRate = dispatchCount ? finalizedCount / dispatchCount : 0;
 
       const resolved = effectiveMine.filter(o =>
-        isFinalized(o) || (o.revision_count || 0) >= 1 || o.status === '已换人');
-      const pass = effectiveMine.filter(o => o.status === '已定稿' && (o.revision_count || 0) === 0).length;
+        isFinalized(o) || revCountOf(o) >= 1 || o.status === '已换人');
+      const pass = effectiveMine.filter(o => o.status === '已定稿' && revCountOf(o) === 0).length;
       const proposalPassRate = resolved.length ? pass / resolved.length : 0;
 
-      const reworkedCount = finalizedMine.filter(o => (o.revision_count || 0) > 0).length;
+      const reworkedCount = finalizedMine.filter(o => revCountOf(o) > 0).length;
       const reworkRate = finalizedCount ? reworkedCount / finalizedCount : 0;
 
       const myFinalizedAny = effectiveMine.filter(o => o.status === '已定稿');
-      const draftToFinalize = myFinalizedAny.filter(o => (o.revision_count || 0) === 0).length;
+      const draftToFinalize = myFinalizedAny.filter(o => revCountOf(o) === 0).length;
       const draftToFinalizeRate = myFinalizedAny.length ? draftToFinalize / myFinalizedAny.length : 0;
 
       // 一次提案通过率：首次提案一次性通过 ÷ 已决提案
@@ -521,7 +556,7 @@ window.Calc = (function () {
         id: o.id, order_no: o.order_no, title: o.title, customer_name: o.customer_name,
         task_type: o.task_type, amount: Number(o.amount) || 0, status: o.status,
         participantIds: ids, participantNames: ids.map(dName),
-        revision_count: o.revision_count || 0, rework_category: o.rework_category || '',
+        revision_count: revCountOf(o), rework_category: o.rework_category || '',
         complaint_count: Number(o.complaint_count) || 0,
         intake_at: o.intake_at, dispatch_at: o.dispatch_at, deadline: o.deadline,
         finalized_at: o.finalized_at, switched_at: o.switched_at,
@@ -542,10 +577,10 @@ window.Calc = (function () {
       range, settings: s,
       seal: sealInfo(range, dispatchOrders, Number(s.seal_days) || SEAL_DAYS_DEFAULT),
       totals: {
-        intakeCount: intakeOrders.length,
+        intakeCount: intakeCountDisplay,
         revenue: Math.round(revenue * 100) / 100,
         complaints,
-        dispatchOrders: dispatchOrders.length,
+        dispatchOrders: dispatchCountDisplay,
         effectiveDispatch: effectiveDispatch.length,   // 派单−客户取消，作为团队定稿率分母
         cancelCount: cancelledOrders.length,
         finalizedCount: finalizedAll.length,
@@ -570,5 +605,5 @@ window.Calc = (function () {
     };
   }
 
-  return { windowOf, inWindow, isFinalized, monthlyReport, dashboardSummary, computeDesigner, analytics, addMonths, assessRisk };
+  return { windowOf, inWindow, isFinalized, revCountOf, isEngagedCancel, monthlyReport, dashboardSummary, computeDesigner, analytics, addMonths, assessRisk };
 })();
